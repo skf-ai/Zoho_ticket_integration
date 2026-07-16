@@ -1,20 +1,43 @@
+"""Zoho client tests with mocked HTTP (no real Zoho calls, no real secrets)."""
+
+import os
 import unittest
-from unittest.mock import patch
-from src import zoho_client
+from unittest.mock import patch, MagicMock
+
+# Provide fake creds via env so config.require() succeeds.
+os.environ.pop("SECRET_NAME", None)
+for k in ("ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET", "ZOHO_REFRESH_TOKEN",
+          "ZOHO_ORG_ID", "ZOHO_DEPARTMENT_ID"):
+    os.environ[k] = "test"
+
+from src import zoho_client  # noqa: E402
+
 
 class TestZohoClient(unittest.TestCase):
-
-    @patch('src.zoho_client.requests.post')
+    @patch("src.zoho_client.requests.post")
     def test_create_ticket(self, mock_post):
-        """Test the Zoho ticket creation function."""
-        # This is a placeholder test. You'll need to expand on it.
-        mock_post.return_value.status_code = 201
-        mock_post.return_value.json.return_value = {'id': 'ticket123'}
+        # First call = token refresh, second = ticket creation.
+        token_resp = MagicMock(status_code=200)
+        token_resp.json.return_value = {"access_token": "abc"}
+        ticket_resp = MagicMock(status_code=200)
+        ticket_resp.json.return_value = {"id": "ticket123"}
+        mock_post.side_effect = [token_resp, ticket_resp]
 
-        ticket = zoho_client.create_ticket('Test Subject', 'Test Description', '12345')
+        ticket = zoho_client.create_ticket("Subj", "Desc", "c1", category="Login Issue")
 
         self.assertIsNotNone(ticket)
-        self.assertEqual(ticket['id'], 'ticket123')
+        self.assertEqual(ticket["id"], "ticket123")
 
-if __name__ == '__main__':
+    @patch("src.zoho_client.requests.patch")
+    @patch("src.zoho_client.requests.post")
+    def test_close_ticket(self, mock_post, mock_patch):
+        token_resp = MagicMock(status_code=200)
+        token_resp.json.return_value = {"access_token": "abc"}
+        mock_post.return_value = token_resp
+        mock_patch.return_value = MagicMock(status_code=200)
+
+        self.assertTrue(zoho_client.close_ticket("ticket123"))
+
+
+if __name__ == "__main__":
     unittest.main()

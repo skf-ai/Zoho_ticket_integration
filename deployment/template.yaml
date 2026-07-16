@@ -1,18 +1,67 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  SAM template for Zoho ticket creation Lambda
+  WhatsApp -> Zoho Desk support bot.
+  Ingress Lambda + API Gateway + DynamoDB conversation state.
+
+Parameters:
+  SecretName:
+    Type: String
+    Default: siddhanta/whatsapp-zoho
+    Description: AWS Secrets Manager secret holding Zoho + WhatsApp credentials.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 20
+    MemorySize: 256
 
 Resources:
-  ZohoTicketFunction:
+  ConversationStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: whatsapp_conversation_state
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: wa_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: wa_id
+          KeyType: HASH
+
+  WhatsappBotFunction:
     Type: AWS::Serverless::Function
     Properties:
       Handler: src/handler.lambda_handler
-      Runtime: python3.9
       CodeUri: ../
+      Environment:
+        Variables:
+          SECRET_NAME: !Ref SecretName
+          STATE_TABLE: !Ref ConversationStateTable
+          GRAPH_API_VERSION: v21.0
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConversationStateTable
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretName}-*
       Events:
-        ApiEvent:
+        WhatsappVerify:
           Type: Api
           Properties:
-            Path: /ticket
+            Path: /whatsapp
+            Method: get
+        WhatsappInbound:
+          Type: Api
+          Properties:
+            Path: /whatsapp
             Method: post
+        ZohoWebhook:
+          Type: Api
+          Properties:
+            Path: /zoho-webhook
+            Method: post
+
+Outputs:
+  ApiBaseUrl:
+    Description: Base URL for the bot API (point Meta's webhook at /whatsapp).
+    Value: !Sub https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod
