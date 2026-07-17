@@ -35,6 +35,44 @@ def _headers(access_token):
     }
 
 
+def find_contact_by_phone(phone, access_token):
+    """Return an existing Zoho contact id matching this phone, or None."""
+    resp = requests.get(
+        f"{config.ZOHO_API_BASE}/contacts/search",
+        headers=_headers(access_token),
+        params={"phone": phone},
+        timeout=15,
+    )
+    if resp.status_code == 200:
+        data = resp.json().get("data", [])
+        if data:
+            return data[0]["id"]
+    return None
+
+
+def create_contact(name, phone, access_token):
+    """Create a Zoho contact (lastName is mandatory in Zoho Desk)."""
+    resp = requests.post(
+        f"{config.ZOHO_API_BASE}/contacts",
+        headers=_headers(access_token),
+        json={"lastName": name or phone, "phone": phone},
+        timeout=15,
+    )
+    if resp.status_code == 200:
+        return resp.json().get("id")
+    print(f"Error creating contact ({resp.status_code}): {resp.text}")
+    return None
+
+
+def find_or_create_contact(phone, name, access_token=None):
+    """Find a contact by phone, or create one. Returns the contact id."""
+    access_token = access_token or get_access_token()
+    if not access_token:
+        return None
+    return (find_contact_by_phone(phone, access_token)
+            or create_contact(name, phone, access_token))
+
+
 def create_ticket(subject, description, contact_id, category=None):
     """Create a Zoho Desk ticket. Returns the ticket dict, or None on failure.
 

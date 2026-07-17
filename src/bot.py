@@ -118,10 +118,8 @@ def _escalate(wa_id, username, category_id, description):
 
 
 def _resolve_contact_id(wa_id, username):
-    """Placeholder — Day 4 will find-or-create a Zoho contact by phone number.
-
-    For now returns empty; Day 4 implements the Zoho contacts lookup/create."""
-    return ""
+    """Find-or-create the Zoho contact for this WhatsApp user, by phone number."""
+    return zoho_client.find_or_create_contact(phone=wa_id, name=username)
 
 
 def _is_yes(answer):

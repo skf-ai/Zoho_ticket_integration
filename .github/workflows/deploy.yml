@@ -1,0 +1,60 @@
+name: Deploy
+
+# Deploys the bot to AWS with SAM.
+#
+# Trigger it MANUALLY from GitHub: Actions tab -> "Deploy" -> "Run workflow".
+# (It can also auto-deploy on push to main — that block is commented out below,
+#  enable it once you're comfortable.)
+#
+# Authentication uses GitHub OIDC (no long-lived AWS keys stored in GitHub).
+# One-time setup is documented in DEPLOYMENT.md.
+
+on:
+  workflow_dispatch: {}      # manual "Run workflow" button
+  # push:
+  #   branches: ["main"]     # uncomment to auto-deploy on merge to main
+
+permissions:
+  id-token: write            # required for OIDC
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install & test (gate deploy on green tests)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m pytest -q
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Set up SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: SAM build
+        run: sam build -t deployment/template.yaml
+
+      - name: SAM deploy
+        run: |
+          sam deploy \
+            --stack-name whatsapp-zoho-bot \
+            --region ap-south-1 \
+            --capabilities CAPABILITY_IAM \
+            --resolve-s3 \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset
