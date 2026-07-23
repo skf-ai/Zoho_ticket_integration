@@ -14,6 +14,12 @@ from src import zoho_client  # noqa: E402
 
 
 class TestZohoClient(unittest.TestCase):
+    def setUp(self):
+        # Each test owns its mocked token exchange; do not share the production
+        # warm-container token cache across test cases.
+        zoho_client._access_token = None
+        zoho_client._access_token_expires_at = 0.0
+
     @patch("src.zoho_client.requests.post")
     def test_create_ticket(self, mock_post):
         # First call = token refresh, second = ticket creation.

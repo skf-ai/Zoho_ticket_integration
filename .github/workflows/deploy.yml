@@ -32,7 +32,7 @@ jobs:
       - name: Install & test (gate deploy on green tests)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
           python -m pytest -q
 
       - name: Configure AWS credentials (OIDC)
@@ -47,7 +47,9 @@ jobs:
           use-installer: true
 
       - name: SAM build
-        run: sam build -t deployment/template.yaml
+        run: |
+          sam validate -t deployment/template.yaml
+          sam build -t deployment/template.yaml
 
       - name: SAM deploy
         run: |

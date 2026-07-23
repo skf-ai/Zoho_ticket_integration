@@ -50,7 +50,7 @@ MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "1024"))
 
 # Hard ceiling on a single reply. WhatsApp messages are short, and a runaway
 # generation is both a bad user experience and a cost incident.
-_TIMEOUT_SECONDS = 30
+_TIMEOUT_SECONDS = float(os.environ.get("LLM_TIMEOUT_SECONDS", "12"))
 
 
 class LLMError(RuntimeError):
@@ -279,12 +279,19 @@ def complete(messages, tools):
     Raises LLMError if the provider fails; the caller decides what the student
     sees when that happens.
     """
-    if PROVIDER == "anthropic":
-        result = _call_anthropic(messages, tools)
-    elif PROVIDER == "openai_compatible":
-        result = _call_openai_compatible(messages, tools)
-    else:
-        raise LLMError(f"Unknown LLM_PROVIDER '{PROVIDER}'")
+    try:
+        if PROVIDER == "anthropic":
+            result = _call_anthropic(messages, tools)
+        elif PROVIDER == "openai_compatible":
+            result = _call_openai_compatible(messages, tools)
+        else:
+            raise LLMError(f"Unknown LLM_PROVIDER '{PROVIDER}'")
+    except LLMError:
+        raise
+    except Exception as exc:
+        # Normalize SDK/network exceptions so the agent's deterministic fallback
+        # is used instead of silently losing the student's message.
+        raise LLMError(f"{PROVIDER} request failed: {exc}") from exc
 
     u = result.get("usage") or {}
     print(f"[llm] {MODEL} in={u.get('input')} out={u.get('output')} "

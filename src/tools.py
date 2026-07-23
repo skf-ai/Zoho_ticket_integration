@@ -120,7 +120,8 @@ def dispatch(name, tool_input, ctx):
             return _confirm_resolution(tool_input, ctx)
         return f"Unknown tool '{name}'. Do not try to call it again."
     except Exception as e:  # noqa: BLE001 - a tool failure must not kill the turn
-        print(f"[tools] {name} failed for {ctx.get('wa_id')}: {e}")
+        wa_id = str(ctx.get("wa_id") or "")
+        print(f"[tools] {name} failed for *{wa_id[-4:]}: {type(e).__name__}")
         return ("That action failed because of a system error. Apologise to the "
                 "student, tell them the team has been notified, and do not retry "
                 "the same action.")
@@ -131,6 +132,14 @@ def dispatch(name, tool_input, ctx):
 def _raise_ticket(args, ctx):
     wa_id = ctx["wa_id"]
     state = ctx["state"]
+    subject_input = str(args.get("subject") or "").strip()
+    description_input = str(args.get("description") or "").strip()
+    category = args.get("category")
+    allowed_categories = {"login", "credentials", "course_access", "content",
+                          "grades", "other"}
+    if not subject_input or not description_input or category not in allowed_categories:
+        return ("The ticket details were incomplete or invalid. Do not retry the "
+                "tool in this turn; apologise and ask the student to try again.")
 
     # Idempotency: one open ticket per student per problem. Guards against model
     # retries and Meta redelivering the same webhook.
@@ -141,33 +150,52 @@ def _raise_ticket(args, ctx):
                 f"another. Tell them it is already with the team, due by "
                 f"{_friendly(due)}.")
 
-    contact_id = zoho_client.find_or_create_contact(
-        phone=wa_id, name=ctx.get("username") or wa_id
-    )
+    if not state_store.reserve_ticket_creation(wa_id):
+        current = state_store.get_state(wa_id)
+        current_id = current.get("ticket_id")
+        if current_id:
+            return (f"This student already has open ticket #{current_id}. Do not "
+                    "raise another; tell them it is already with the team.")
+        return ("A ticket is already being created for this student. Do not retry "
+                "or create another; tell them the request is being processed.")
+
+    try:
+        contact_id = zoho_client.find_or_create_contact(
+            phone=wa_id, name=ctx.get("username") or wa_id
+        )
+    except Exception:
+        state_store.release_ticket_creation(wa_id)
+        raise
     if not contact_id:
+        state_store.release_ticket_creation(wa_id)
         return ("Could not reach the ticket system. Tell the student we could not "
                 "raise the ticket right now and ask them to message again shortly.")
 
-    urgency = args.get("urgency", "normal")
-    subject = args["subject"][:200]
+    urgency = "urgent" if args.get("urgency") == "urgent" else "normal"
+    subject = subject_input[:200]
     if urgency == "urgent":
         subject = f"[URGENT] {subject}"
 
     description = (
-        f"{args['description']}\n\n"
+        f"{description_input}\n\n"
         f"---\n"
         f"Raised automatically from WhatsApp.\n"
         f"Student: {ctx.get('username') or 'unknown'} ({wa_id})\n"
-        f"Category: {args.get('category', 'other')} | Urgency: {urgency}"
+        f"Category: {category} | Urgency: {urgency}"
     )
 
-    ticket = zoho_client.create_ticket(
-        subject=subject,
-        description=description,
-        contact_id=contact_id,
-        category=args.get("category"),
-    )
+    try:
+        ticket = zoho_client.create_ticket(
+            subject=subject,
+            description=description,
+            contact_id=contact_id,
+            category=category,
+        )
+    except Exception:
+        state_store.release_ticket_creation(wa_id)
+        raise
     if not ticket or not ticket.get("id"):
+        state_store.release_ticket_creation(wa_id)
         return ("Could not create the ticket. Tell the student we could not raise "
                 "it right now and ask them to message again shortly.")
 
@@ -178,7 +206,7 @@ def _raise_ticket(args, ctx):
     state_store.open_ticket(
         wa_id=wa_id,
         ticket_id=ticket_id,
-        category=args.get("category", "other"),
+        category=category,
         created_at=now,
         sla_due_at=due,
     )

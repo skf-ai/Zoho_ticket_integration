@@ -45,6 +45,9 @@ _SECRET_KEYS = (
     "whatsapp_phone_number_id",
     "whatsapp_verify_token",
     "whatsapp_app_secret",
+    "zoho_webhook_secret",
+    "llm_api_key",
+    "lms_admin_wa_id",
 )
 
 
@@ -59,9 +62,13 @@ def _load_secrets():
             resp = client.get_secret_value(SecretId=SECRET_NAME)
             return json.loads(resp["SecretString"])
         except Exception as e:  # noqa: BLE001 - fall back to env vars locally
-            print(f"[config] Secrets Manager unavailable ({e}); using env vars.")
+            # SECRET_NAME means this is an AWS-style deployment. Falling back
+            # silently can start a live webhook with empty authentication keys.
+            raise RuntimeError(
+                f"Could not load configured Secrets Manager secret '{SECRET_NAME}'"
+            ) from e
 
-    # Local fallback: read each key from the environment (upper-cased).
+    # Local fallback is allowed only when no secret name was configured.
     return {key: os.environ.get(key.upper(), "") for key in _SECRET_KEYS}
 
 
@@ -79,3 +86,15 @@ def require(key):
             f"('{SECRET_NAME}') or as the env var '{key.upper()}'."
         )
     return value
+
+
+def validate_production():
+    """Return missing security/runtime settings required for a live deployment."""
+    required = (
+        "zoho_client_id", "zoho_client_secret", "zoho_refresh_token",
+        "zoho_org_id", "zoho_department_id", "whatsapp_token",
+        "whatsapp_phone_number_id", "whatsapp_verify_token",
+        "whatsapp_app_secret", "zoho_webhook_secret", "llm_api_key",
+        "lms_admin_wa_id",
+    )
+    return [key for key in required if not get(key)]

@@ -66,6 +66,9 @@ def decide(state, now=None):
         return _decide_open(state, now)
     if status == "awaiting_verification":
         return _decide_awaiting(state, now)
+    if status == "creating":
+        return {"action": "alert_stuck_creation", "next_at": None,
+                "reason": "ticket creation did not finish"}
     return {"action": "none", "next_at": None, "reason": f"status={status}"}
 
 

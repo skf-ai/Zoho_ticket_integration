@@ -1,6 +1,6 @@
 """Scheduled worker that executes whatever the accountability engine says is due.
 
-Runs on an EventBridge schedule (every 15 minutes). Each run queries the
+Runs on an EventBridge schedule (hourly). Each run queries the
 `due-index` for conversations whose `next_action_at` has passed, asks sla.decide()
 what to do, and does it.
 
@@ -10,8 +10,8 @@ One scheduled Lambda costs pennies a month regardless of how many tickets are
 open. The alternatives -- an EventBridge Scheduler entry per ticket, or a Step
 Functions execution per ticket -- add per-ticket cost, per-ticket cleanup, and a
 second place where state can drift out of sync with DynamoDB. At hundreds of open
-tickets, a single indexed query every 15 minutes is both cheaper and simpler to
-reason about. Fifteen minutes of granularity is irrelevant when deadlines are
+tickets, a single indexed query every hour is both cheaper and simpler to
+reason about. Hourly granularity is sufficient when deadlines are
 measured in working days.
 
 ## Why every outbound message here is a template
@@ -32,7 +32,7 @@ from . import config, sla, state_store, whatsapp_client, workdays, zoho_client
 # WhatsApp number of the LMS administrator who receives nudges (E.164, no '+').
 ADMIN_WA_ID_KEY = "lms_admin_wa_id"
 
-BATCH_LIMIT = int(os.environ.get("SWEEP_BATCH_LIMIT", "100"))
+BATCH_LIMIT = int(os.environ.get("SWEEP_BATCH_LIMIT", "200"))
 
 TPL_ADMIN_NUDGE = "ticket_pending_admin"
 TPL_STUDENT_VERIFY = "issue_resolved_check"
@@ -50,6 +50,7 @@ def run_once():
     """Process one batch of due conversations. Returns a per-action count."""
     due = state_store.due_now(limit=BATCH_LIMIT)
     counts = {}
+    failures = 0
 
     for item in due:
         wa_id = item.get("wa_id")
@@ -57,16 +58,22 @@ def run_once():
         action = decision["action"]
         counts[action] = counts.get(action, 0) + 1
 
-        print(f"[sweeper] {wa_id} ticket={item.get('ticket_id')} "
+        print(f"[sweeper] *{str(wa_id)[-4:]} ticket={item.get('ticket_id')} "
               f"action={action} reason={decision['reason']}")
 
         try:
             _perform(action, item, decision)
         except Exception as e:  # noqa: BLE001 - one bad item must not stop the batch
-            print(f"[sweeper] FAILED {action} for {wa_id}: {e}")
+            failures += 1
+            print(f"[sweeper] FAILED {action} for *{str(wa_id)[-4:]}: "
+                  f"{type(e).__name__}")
 
     if counts:
         print(f"[sweeper] batch complete: {counts}")
+    if failures:
+        # Preserve per-item isolation, but fail the invocation after the batch so
+        # EventBridge retries and the CloudWatch error alarm becomes meaningful.
+        raise RuntimeError(f"{failures} scheduled action(s) failed")
     return counts
 
 
@@ -103,6 +110,14 @@ def _perform(action, item, decision):
 
     elif action == "auto_close_student":
         _auto_close_student(item)
+
+    elif action == "alert_stuck_creation":
+        # Zoho may have created the ticket immediately before a timeout. A blind
+        # retry could duplicate it, so require an operator to reconcile safely.
+        raise RuntimeError(
+            f"ticket creation for *{str(wa_id)[-4:]} is stuck; reconcile Zoho "
+            "before releasing the DynamoDB reservation"
+        )
 
     elif action == "none":
         # Nothing due yet; move the wake-up forward WITHOUT counting a nudge.
@@ -152,17 +167,22 @@ def _auto_close_admin(item):
     wa_id = item["wa_id"]
     ticket_id = item.get("ticket_id")
 
-    zoho_client.add_comment(
+    commented = zoho_client.add_comment(
         ticket_id,
         "Auto-closed by the WhatsApp support system: the 3 working day service "
         "level was reached without the ticket being resolved. The student has "
         "been told they can reopen it by messaging again.",
     )
-    zoho_client.close_ticket(ticket_id)
+    if not commented:
+        raise RuntimeError(f"could not add audit comment to Zoho ticket {ticket_id}")
+    if not zoho_client.close_ticket(ticket_id):
+        raise RuntimeError(f"Zoho did not close ticket {ticket_id}")
 
-    whatsapp_client.send_template(
+    sent = whatsapp_client.send_template(
         wa_id, TPL_STUDENT_CLOSED, components=_body_params([str(ticket_id)]),
     )
+    if not sent:
+        raise RuntimeError(f"could not notify student that ticket {ticket_id} closed")
     state_store.close_ticket(wa_id, reason="sla_expired_no_resolution")
 
 
@@ -171,16 +191,21 @@ def _auto_close_student(item):
     wa_id = item["wa_id"]
     ticket_id = item.get("ticket_id")
 
-    zoho_client.add_comment(
+    commented = zoho_client.add_comment(
         ticket_id,
         "Auto-closed by the WhatsApp support system: the student did not confirm "
         "within 3 working days of being asked. Assumed resolved.",
     )
-    zoho_client.close_ticket(ticket_id)
+    if not commented:
+        raise RuntimeError(f"could not add audit comment to Zoho ticket {ticket_id}")
+    if not zoho_client.close_ticket(ticket_id):
+        raise RuntimeError(f"Zoho did not close ticket {ticket_id}")
 
-    whatsapp_client.send_template(
+    sent = whatsapp_client.send_template(
         wa_id, TPL_STUDENT_CLOSED, components=_body_params([str(ticket_id)]),
     )
+    if not sent:
+        raise RuntimeError(f"could not notify student that ticket {ticket_id} closed")
     state_store.close_ticket(wa_id, reason="student_no_confirmation")
 
 

@@ -32,6 +32,9 @@ indexes entirely and cost nothing to query around.
 Ticket status values: none | open | awaiting_verification | closed
 """
 
+import os
+from datetime import timedelta
+
 import boto3
 from boto3.dynamodb.conditions import Key
 
@@ -42,6 +45,7 @@ DUE_BUCKET = "DUE"
 # How many messages of history to keep. Long enough for a support conversation
 # to stay coherent, short enough to bound the token cost of every turn.
 MAX_HISTORY_MESSAGES = 20
+STATE_RETENTION_DAYS = int(os.environ.get("STATE_RETENTION_DAYS", "90"))
 
 _table = None
 
@@ -80,15 +84,26 @@ def find_by_ticket(ticket_id):
 
 def due_now(limit=100):
     """Conversations whose next scheduled action is due. Drives the sweeper."""
-    resp = _t().query(
-        IndexName="due-index",
-        KeyConditionExpression=(
-            Key("due_bucket").eq(DUE_BUCKET)
-            & Key("next_action_at").lte(workdays.iso(workdays.now_utc()))
-        ),
-        Limit=limit,
-    )
-    return resp.get("Items", [])
+    items = []
+    start_key = None
+    cutoff = workdays.iso(workdays.now_utc())
+    while len(items) < limit:
+        kwargs = {
+            "IndexName": "due-index",
+            "KeyConditionExpression": (
+                Key("due_bucket").eq(DUE_BUCKET)
+                & Key("next_action_at").lte(cutoff)
+            ),
+            "Limit": limit - len(items),
+        }
+        if start_key:
+            kwargs["ExclusiveStartKey"] = start_key
+        resp = _t().query(**kwargs)
+        items.extend(resp.get("Items", []))
+        start_key = resp.get("LastEvaluatedKey")
+        if not start_key:
+            break
+    return items
 
 
 # --- conversation memory -------------------------------------------------------
@@ -109,13 +124,20 @@ def append_history(wa_id, messages):
         # tool_use block that has been trimmed away, which providers reject.
         while history and _is_orphan_tool_result(history[0]):
             history.pop(0)
+        # Provider conversations must begin with a user turn. A raw count can
+        # otherwise cut immediately before an assistant tool-use block.
+        while history and history[0].get("role") != "user":
+            history.pop(0)
+        while history and _is_orphan_tool_result(history[0]):
+            history.pop(0)
 
     _t().update_item(
         Key={"wa_id": wa_id},
-        UpdateExpression="SET history = :h, last_activity_at = :now",
+        UpdateExpression="SET history = :h, last_activity_at = :now, expires_at = :ttl",
         ExpressionAttributeValues={
             ":h": history,
             ":now": workdays.iso(workdays.now_utc()),
+            ":ttl": _retention_epoch(),
         },
     )
     return history
@@ -139,6 +161,53 @@ def clear_history(wa_id):
 
 # --- ticket lifecycle ----------------------------------------------------------
 
+def reserve_ticket_creation(wa_id):
+    """Atomically reserve the right to create this student's next ticket.
+
+    This closes the race where two different inbound message IDs both read an
+    empty state and create separate Zoho tickets before either writes DynamoDB.
+    """
+    from botocore.exceptions import ClientError
+
+    now = workdays.now_utc()
+    review_at = now + timedelta(minutes=10)
+    try:
+        _t().update_item(
+            Key={"wa_id": wa_id},
+            UpdateExpression=(
+                "SET ticket_status = :creating, ticket_creation_started_at = :now, "
+                "due_bucket = :bucket, next_action_at = :review"
+            ),
+            ConditionExpression=(
+                "attribute_not_exists(ticket_status) OR "
+                "ticket_status IN (:none, :closed)"
+            ),
+            ExpressionAttributeValues={
+                ":creating": "creating",
+                ":none": "none",
+                ":closed": "closed",
+                ":now": workdays.iso(now),
+                ":bucket": DUE_BUCKET,
+                ":review": workdays.iso(review_at),
+            },
+        )
+        return True
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return False
+        raise
+
+
+def release_ticket_creation(wa_id):
+    """Release a reservation when Zoho definitely did not create a ticket."""
+    _t().update_item(
+        Key={"wa_id": wa_id},
+        UpdateExpression=("SET ticket_status = :none REMOVE "
+                          "ticket_creation_started_at, due_bucket, next_action_at"),
+        ConditionExpression="ticket_status = :creating",
+        ExpressionAttributeValues={":none": "none", ":creating": "creating"},
+    )
+
 def open_ticket(wa_id, ticket_id, category, created_at, sla_due_at):
     """Record a newly raised ticket and schedule the first admin nudge."""
     from . import sla  # imported here to avoid a circular import at module load
@@ -149,11 +218,14 @@ def open_ticket(wa_id, ticket_id, category, created_at, sla_due_at):
         UpdateExpression=(
             "SET ticket_id = :tid, ticket_status = :st, category = :cat, "
             "ticket_created_at = :created, sla_due_at = :due, "
-            "admin_nudges = :zero, due_bucket = :bucket, next_action_at = :next"
+            "admin_nudges = :zero, due_bucket = :bucket, next_action_at = :next "
+            "REMOVE ticket_creation_started_at"
         ),
+        ConditionExpression="ticket_status = :creating",
         ExpressionAttributeValues={
             ":tid": str(ticket_id),
             ":st": "open",
+            ":creating": "creating",
             ":cat": category,
             ":created": workdays.iso(created_at),
             ":due": workdays.iso(sla_due_at),
@@ -181,6 +253,44 @@ def record_nudge(wa_id, next_action_at):
     )
 
 
+def begin_verification(wa_id):
+    """Atomically reserve the resolve webhook so concurrent callbacks send once."""
+    from botocore.exceptions import ClientError
+
+    now = workdays.now_utc()
+    stale_before = now - timedelta(minutes=5)
+    try:
+        _t().update_item(
+            Key={"wa_id": wa_id},
+            UpdateExpression=("SET ticket_status = :prompting, "
+                              "verification_prompting_at = :now"),
+            ConditionExpression=(
+                "ticket_status = :open OR (ticket_status = :prompting AND "
+                "verification_prompting_at < :stale)"
+            ),
+            ExpressionAttributeValues={":prompting": "verification_prompting",
+                                       ":open": "open",
+                                       ":now": workdays.iso(now),
+                                       ":stale": workdays.iso(stale_before)},
+        )
+        return True
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return False
+        raise
+
+
+def release_verification(wa_id):
+    """Return to open when Meta rejects the verification template."""
+    _t().update_item(
+        Key={"wa_id": wa_id},
+        UpdateExpression="SET ticket_status = :open REMOVE verification_prompting_at",
+        ConditionExpression="ticket_status = :prompting",
+        ExpressionAttributeValues={":open": "open",
+                                   ":prompting": "verification_prompting"},
+    )
+
+
 def await_verification(wa_id, prompted_at, auto_close_at=None):
     """Admin marked the work done; we have asked the student to confirm.
 
@@ -197,10 +307,13 @@ def await_verification(wa_id, prompted_at, auto_close_at=None):
         UpdateExpression=(
             "SET ticket_status = :st, verification_prompted_at = :now, "
             "student_reminders = :zero, "
-            "due_bucket = :bucket, next_action_at = :next"
+            "due_bucket = :bucket, next_action_at = :next "
+            "REMOVE verification_prompting_at"
         ),
+        ConditionExpression="ticket_status = :prompting",
         ExpressionAttributeValues={
             ":st": "awaiting_verification",
+            ":prompting": "verification_prompting",
             ":now": workdays.iso(prompted_at),
             ":zero": 0,
             ":bucket": DUE_BUCKET,
@@ -256,13 +369,15 @@ def close_ticket(wa_id, reason):
     _t().update_item(
         Key={"wa_id": wa_id},
         UpdateExpression=(
-            "SET ticket_status = :st, closed_at = :now, closed_reason = :reason "
+            "SET ticket_status = :st, closed_at = :now, closed_reason = :reason, "
+            "expires_at = :ttl "
             "REMOVE ticket_id, due_bucket, next_action_at"
         ),
         ExpressionAttributeValues={
             ":st": "closed",
             ":now": workdays.iso(workdays.now_utc()),
             ":reason": reason,
+            ":ttl": _retention_epoch(),
         },
     )
 
@@ -315,10 +430,35 @@ def mark_processed(message_id):
         raise
 
 
+def complete_processed(message_id):
+    """Mark a claimed message complete while retaining the deduplication row."""
+    _t().update_item(
+        Key={"wa_id": f"msg#{message_id}"},
+        UpdateExpression="SET processing_status = :done, completed_at = :now",
+        ExpressionAttributeValues={
+            ":done": "completed",
+            ":now": workdays.iso(workdays.now_utc()),
+        },
+    )
+
+
+def release_processed(message_id):
+    """Release a claim after failure so a provider retry can process it again."""
+    _t().delete_item(Key={"wa_id": f"msg#{message_id}"})
+
+
 def touch_activity(wa_id):
     """Record that the student just said something. Inactivity timers read this."""
     _t().update_item(
         Key={"wa_id": wa_id},
-        UpdateExpression="SET last_activity_at = :now",
-        ExpressionAttributeValues={":now": workdays.iso(workdays.now_utc())},
+        UpdateExpression="SET last_activity_at = :now, expires_at = :ttl",
+        ExpressionAttributeValues={
+            ":now": workdays.iso(workdays.now_utc()),
+            ":ttl": _retention_epoch(),
+        },
     )
+
+
+def _retention_epoch():
+    """DynamoDB TTL for inactive conversation data (processed rows use 24h)."""
+    return int(workdays.now_utc().timestamp()) + STATE_RETENTION_DAYS * 86400

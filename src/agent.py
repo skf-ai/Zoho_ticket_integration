@@ -27,8 +27,8 @@ MAX_ITERATIONS = 4
 # Sent when the model is unavailable. Deliberately plain and useful.
 FALLBACK_REPLY = (
     "Sorry, our assistant is temporarily unavailable. Please reply with a short "
-    "description of your problem and we'll raise it with the support team, or "
-    "email us if it's urgent."
+    "description of your problem and try again shortly. If it is urgent, please "
+    "contact the support address provided by your institution."
 )
 
 
@@ -37,11 +37,13 @@ def handle_inbound(wa_id, username, message):
     text = (message.get("text") or "").strip()
     if not text:
         # Media, location, reactions and similar. Acknowledge rather than ignore.
-        whatsapp_client.send_text(
+        sent = whatsapp_client.send_text(
             wa_id,
             "Sorry, I can only read text messages. Please describe your problem "
             "in a message and I'll help.",
         )
+        if not sent:
+            raise RuntimeError("WhatsApp did not accept the media guidance reply")
         return None
 
     state = state_store.get_state(wa_id)
@@ -55,13 +57,15 @@ def handle_inbound(wa_id, username, message):
     try:
         reply, new_turns = _run_loop(history, turn, ctx)
     except llm.LLMError as e:
-        print(f"[agent] LLM unavailable for {wa_id}: {e}")
-        whatsapp_client.send_text(wa_id, FALLBACK_REPLY)
+        print(f"[agent] LLM unavailable for *{wa_id[-4:]}: {type(e).__name__}")
+        if not whatsapp_client.send_text(wa_id, FALLBACK_REPLY):
+            raise RuntimeError("WhatsApp did not accept the fallback reply") from e
         state_store.append_history(wa_id, turn)
         return FALLBACK_REPLY
 
     if reply:
-        whatsapp_client.send_text(wa_id, reply)
+        if not whatsapp_client.send_text(wa_id, reply):
+            raise RuntimeError("WhatsApp did not accept the agent reply")
     state_store.append_history(wa_id, new_turns)
     return reply
 
@@ -97,7 +101,11 @@ def _run_loop(history, turn, ctx):
 
         results = []
         for call in result["tool_calls"]:
-            print(f"[agent] {ctx['wa_id']} -> {call['name']}({call['input']})")
+            # Multiple tool calls can be returned in one model response. Refresh
+            # before every call so a ticket created by the previous call is seen
+            # by the duplicate guard immediately.
+            ctx["state"] = state_store.get_state(ctx["wa_id"])
+            print(f"[agent] *{ctx['wa_id'][-4:]} -> {call['name']}")
             output = tools.dispatch(call["name"], call["input"], ctx)
             results.append({
                 "type": "tool_result",
@@ -112,7 +120,7 @@ def _run_loop(history, turn, ctx):
     # Ran out of iterations without a final answer. Say something useful rather
     # than nothing, and log it loudly -- repeated hits mean the prompt or the
     # tool descriptions need work.
-    print(f"[agent] hit MAX_ITERATIONS for {ctx['wa_id']}")
+    print(f"[agent] hit MAX_ITERATIONS for *{ctx['wa_id'][-4:]}")
     return ("I've noted your issue and passed it to the support team. "
             "They'll get back to you shortly."), stored
 

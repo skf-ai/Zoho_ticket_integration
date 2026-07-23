@@ -1,7 +1,6 @@
 """Outbound WhatsApp messaging via the Meta Cloud API (Graph API).
 
-Sends: plain text, an interactive category list, quick-reply buttons (Yes/No),
-and pre-approved template messages (for the >24h "issue resolved?" prompt).
+Sends plain text and pre-approved template messages.
 
 Tested on Day 2.
 """
@@ -38,49 +37,6 @@ def send_text(to, text):
         "to": to,
         "type": "text",
         "text": {"body": text},
-    })
-
-
-def send_category_list(to, categories, header="How can we help?",
-                       body="Please choose a category:"):
-    """Send an interactive list message with the FAQ categories.
-
-    `categories` is a list of dicts with 'id' and 'title' (see faq.CATEGORIES).
-    A list message is used because WhatsApp buttons max out at 3 and we have 4.
-    """
-    rows = [{"id": c["id"], "title": c["title"][:24]} for c in categories]
-    return _send({
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "interactive",
-        "interactive": {
-            "type": "list",
-            "header": {"type": "text", "text": header},
-            "body": {"text": body},
-            "action": {
-                "button": "Choose",
-                "sections": [{"title": "Categories", "rows": rows}],
-            },
-        },
-    })
-
-
-def send_yes_no(to, body, yes_id="yes", no_id="no"):
-    """Send a quick-reply Yes/No button message (e.g. 'Issue solved?')."""
-    return _send({
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "body": {"text": body},
-            "action": {
-                "buttons": [
-                    {"type": "reply", "reply": {"id": yes_id, "title": "Yes"}},
-                    {"type": "reply", "reply": {"id": no_id, "title": "No"}},
-                ]
-            },
-        },
     })
 
 

@@ -33,7 +33,7 @@ from src import agent, llm, sla, sweeper, whatsapp_client, workdays
 
 STUDENT = "919999000001"
 STUDENT_NAME = "Test Student"
-ADMIN = "919888000002"
+ADMIN = "919500089638"
 
 C_BOT, C_YOU, C_SYS, C_ADMIN, C_OFF = (
     "\033[96m", "\033[93m", "\033[90m", "\033[95m", "\033[0m"
@@ -105,6 +105,18 @@ class FakeStore:
             "due_bucket": "DUE",
             "next_action_at": workdays.iso(sla.first_nudge_at(created_at)),
         })
+
+    def reserve_ticket_creation(self, wa_id):
+        item = self._item(wa_id)
+        if item.get("ticket_status", "none") not in ("none", "closed"):
+            return False
+        item["ticket_status"] = "creating"
+        return True
+
+    def release_ticket_creation(self, wa_id):
+        item = self._item(wa_id)
+        if item.get("ticket_status") == "creating":
+            item["ticket_status"] = "none"
 
     def record_nudge(self, wa_id, next_action_at):
         item = self._item(wa_id)
@@ -237,10 +249,6 @@ def fake_send_template(to, template_name, language="en", components=None):
     return True
 
 
-def fake_send_yes_no(to, body, yes_id="yes", no_id="no"):
-    return fake_send_text(to, f"{body}  [Yes] [No]")
-
-
 # --- scripted model, for --mock ------------------------------------------------
 
 _mock_counter = {"n": 0}
@@ -258,22 +266,36 @@ def mock_complete(messages, tools_):
             last = m["content"].lower()
             break
         if m["role"] == "user" and isinstance(m.get("content"), list):
-            if any(b.get("type") == "tool_result" for b in m["content"]):
-                return {"text": "Thanks -- that's all handled now.",
+            results = [b for b in m["content"] if b.get("type") == "tool_result"]
+            if results:
+                result_text = results[0].get("content") or "That action is complete."
+                # Tool results are instructions written for the real model. Make
+                # the scripted demonstration student-facing instead of echoing
+                # phrases such as "Tell the student..." verbatim.
+                result_text = result_text.split("Tell the student")[0].strip()
+                result_text = result_text.replace("This student", "You")
+                return {"text": result_text,
                         "tool_calls": [], "stop_reason": "end_turn",
                         "raw_content": None, "usage": {}}
 
     state = STORE.get_state(STUDENT)
 
     if state.get("ticket_status") == "awaiting_verification":
-        resolved = any(w in last for w in ("yes", "work", "fixed", "solved", "ok"))
+        negative = ("no", "not fixed", "not working", "still broken",
+                    "still not working", "didn't work", "did not work")
+        positive = ("yes", "it works", "working now", "fixed now",
+                    "resolved", "solved")
+        resolved = (not any(p in last for p in negative)
+                    and any(p in last for p in positive))
         return {"text": "", "stop_reason": "tool_use", "raw_content": None,
                 "usage": {}, "tool_calls": [{
                     "id": f"mock_{_mock_counter['n']}", "name": "confirm_resolution",
                     "input": {"resolved": resolved, "note": last}}]}
 
-    escalate = any(w in last for w in
-                   ("still", "not work", "didn't", "didnt", "no ", "tried"))
+    escalate = (last.strip() == "no" or any(w in last for w in
+                   ("still", "not work", "didn't", "didnt", "tried",
+                    "raise a ticket", "create a ticket", "escalate"))
+               )
     if escalate:
         _mock_counter["n"] += 1
         return {"text": "", "stop_reason": "tool_use", "raw_content": None,
@@ -302,6 +324,7 @@ def install_fakes(mock_llm):
     import src.zoho_client as zc
 
     for name in ("get_state", "append_history", "touch_activity", "open_ticket",
+                 "reserve_ticket_creation", "release_ticket_creation",
                  "record_nudge", "record_student_reminder", "await_verification",
                  "reopen_ticket", "close_ticket", "find_by_ticket", "due_now",
                  "mark_processed", "clear_history", "set_next_action"):
@@ -313,8 +336,6 @@ def install_fakes(mock_llm):
 
     whatsapp_client.send_text = fake_send_text
     whatsapp_client.send_template = fake_send_template
-    whatsapp_client.send_yes_no = fake_send_yes_no
-
     workdays.now_utc = CLOCK.now
 
     import src.config as cfg

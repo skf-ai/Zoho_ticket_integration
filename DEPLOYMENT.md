@@ -33,9 +33,9 @@ AWS Console → **IAM → Roles → Create role**:
     "token.actions.githubusercontent.com:sub": "repo:skf-ai/Zoho_ticket_integration:*"
   }
   ```
-- Permissions: attach a policy allowing SAM to deploy. To start, `AdministratorAccess`
-  works; for production, scope it down to CloudFormation, Lambda, IAM, S3, API
-  Gateway, DynamoDB, and Secrets Manager.
+- Permissions: use a deployment policy scoped to this stack's CloudFormation,
+  Lambda, IAM, S3, API Gateway, DynamoDB, EventBridge, SQS, SNS, CloudWatch and
+  Logs resources. Do not leave `AdministratorAccess` on the GitHub role.
 - Name it e.g. `github-deploy-whatsapp-zoho`
 - **Copy the Role ARN** (looks like `arn:aws:iam::417311687123:role/github-deploy-whatsapp-zoho`)
 
@@ -62,8 +62,32 @@ GitHub repo → **Settings → Secrets and variables → Actions → New reposit
    `https://abc123.execute-api.ap-south-1.amazonaws.com/Prod/whatsapp`
 2. Meta app → WhatsApp → Configuration → **Webhook**:
    - **Callback URL:** the URL above
-   - **Verify token:** `skf-whatsapp-verify-2026` (matches Secrets Manager)
+   - **Verify token:** the `whatsapp_verify_token` value in Secrets Manager
    - Click **Verify and save**
 3. **Subscribe** to the `messages` webhook field.
+
+## Configure the Zoho resolution workflow
+
+Create a Zoho Desk workflow that runs when a ticket changes to `Resolved` and
+POSTs JSON containing `ticketId` to the stack's `ZohoWebhookUrl` output. Add the
+HTTP header `X-Webhook-Secret` with the same value stored as
+`zoho_webhook_secret`. Requests without this value receive HTTP 401.
+
+## Alerts
+
+Set the optional CloudFormation `AlertEmail` parameter during deployment to
+create webhook-error, sweeper-error and sweeper-silent alarms. AWS sends an SNS
+confirmation message; monitoring does not activate until the recipient confirms.
+
+## Required post-deploy checks
+
+Open `<ApiBaseUrl>/health`. Deployment is ready only when it returns HTTP 200 and
+`"ready": true`. Then follow the controlled live test in `RUNBOOK.md`.
+
+The hardened release creates `whatsapp_conversation_state_v2` because DynamoDB
+permits only one new GSI per update and this version requires two. CloudFormation
+retains the legacy table rather than deleting it. Resolve or manually account for
+any active legacy ticket before directing Meta to the new deployment; delete the
+old table only after the agreed retention period and an explicit backup decision.
 
 Redeploys (after code changes) reuse the same URL — you only configure Meta once.

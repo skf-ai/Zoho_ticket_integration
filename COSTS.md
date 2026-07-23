@@ -169,7 +169,7 @@ region ap-south-1. Nothing is stored in the code or in GitHub.
 | `whatsapp_token` | Meta access token | ⚠️ **Currently temporary — expires in ~24h** |
 | `whatsapp_phone_number_id` | 1121518577721735 | ⚠️ Currently Meta's **test** number |
 | `whatsapp_waba_id` | 991209477079437 | Stable |
-| `whatsapp_verify_token` | `skf-whatsapp-verify-2026` | Chosen by us |
+| `whatsapp_verify_token` | stored in Secrets Manager; rotate if previously exposed | Chosen by us |
 | `whatsapp_app_secret` | Verifies messages truly come from Meta | ⚠️ **Currently empty** |
 | `llm_api_key` | Anthropic API key | Not yet added |
 | `lms_admin_wa_id` | Admin's WhatsApp number for nudges | Not yet added |

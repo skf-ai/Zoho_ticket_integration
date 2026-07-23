@@ -9,36 +9,80 @@ Parameters:
     Type: String
     Default: siddhanta/whatsapp-zoho
     Description: AWS Secrets Manager secret holding Zoho + WhatsApp credentials.
+  StateTableName:
+    Type: String
+    Default: whatsapp_conversation_state_v2
+    Description: V2 table; the legacy table is retained during replacement.
+  AlertEmail:
+    Type: String
+    Default: ''
+    Description: Optional operations email for Lambda and sweeper alarms.
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
 
 Globals:
   Function:
     Runtime: python3.12
-    Timeout: 20
     MemorySize: 256
+    Environment:
+      Variables:
+        SECRET_NAME: !Ref SecretName
+        STATE_TABLE: !Ref ConversationStateTable
+        GRAPH_API_VERSION: v21.0
+        LLM_TIMEOUT_SECONDS: '12'
 
 Resources:
   ConversationStateTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
-      TableName: whatsapp_conversation_state
+      TableName: !Ref StateTableName
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: wa_id
           AttributeType: S
+        - AttributeName: ticket_id
+          AttributeType: S
+        - AttributeName: due_bucket
+          AttributeType: S
+        - AttributeName: next_action_at
+          AttributeType: S
       KeySchema:
         - AttributeName: wa_id
           KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: ticket-index
+          KeySchema:
+            - AttributeName: ticket_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: due-index
+          KeySchema:
+            - AttributeName: due_bucket
+              KeyType: HASH
+            - AttributeName: next_action_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
 
   WhatsappBotFunction:
     Type: AWS::Serverless::Function
+    DependsOn: WebhookLogGroup
     Properties:
       Handler: src/handler.lambda_handler
+      FunctionName: whatsapp-zoho-webhook
       CodeUri: ../
-      Environment:
-        Variables:
-          SECRET_NAME: !Ref SecretName
-          STATE_TABLE: !Ref ConversationStateTable
-          GRAPH_API_VERSION: v21.0
+      Timeout: 25
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ConversationStateTable
@@ -60,8 +104,126 @@ Resources:
           Properties:
             Path: /zoho-webhook
             Method: post
+        Health:
+          Type: Api
+          Properties:
+            Path: /health
+            Method: get
+
+  SweeperFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: SweeperLogGroup
+    Properties:
+      Handler: src/sweeper.lambda_handler
+      FunctionName: whatsapp-zoho-sweeper
+      CodeUri: ../
+      Timeout: 120
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConversationStateTable
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretName}-*
+      Events:
+        HourlySweep:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 hour)
+            Enabled: true
+            Description: Process due LMS support ticket reminders and closures.
+            RetryPolicy:
+              MaximumRetryAttempts: 2
+              MaximumEventAgeInSeconds: 3600
+            DeadLetterConfig:
+              Type: SQS
+              QueueLogicalId: SweeperDeadLetterQueue
+
+  WebhookLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/whatsapp-zoho-webhook
+      RetentionInDays: 30
+
+  SweeperLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/whatsapp-zoho-sweeper
+      RetentionInDays: 30
+
+  OperationsTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasAlertEmail
+    Properties:
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlertEmail
+
+  WebhookErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlertEmail
+    Properties:
+      AlarmDescription: WhatsApp/Zoho webhook Lambda returned an error.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref WhatsappBotFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OperationsTopic
+
+  SweeperErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlertEmail
+    Properties:
+      AlarmDescription: Scheduled accountability worker returned an error.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SweeperFunction
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OperationsTopic
+
+  SweeperSilentAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlertEmail
+    Properties:
+      AlarmDescription: Scheduled accountability worker has not run for two hours.
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SweeperFunction
+      Statistic: Sum
+      Period: 7200
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions:
+        - !Ref OperationsTopic
 
 Outputs:
   ApiBaseUrl:
     Description: Base URL for the bot API (point Meta's webhook at /whatsapp).
     Value: !Sub https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod
+  WhatsappWebhookUrl:
+    Description: Meta WhatsApp webhook URL.
+    Value: !Sub https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/whatsapp
+  ZohoWebhookUrl:
+    Description: Zoho Desk resolved-ticket workflow webhook URL.
+    Value: !Sub https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/zoho-webhook
+  StateTable:
+    Description: DynamoDB table used by the production agentic workflow.
+    Value: !Ref ConversationStateTable

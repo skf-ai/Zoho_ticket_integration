@@ -22,6 +22,7 @@ from pathlib import Path
 # knowledge/ sits beside src/ at the repo root, and is packaged into the Lambda
 # bundle by deployment/build.sh.
 KNOWLEDGE_DIR = Path(__file__).resolve().parent.parent / "knowledge"
+PLACEHOLDERS = ("<LMS_URL>", "<SUPPORT_EMAIL>")
 
 
 @functools.lru_cache(maxsize=1)
@@ -51,3 +52,9 @@ def topics():
     if not KNOWLEDGE_DIR.is_dir():
         return []
     return [p.stem for p in sorted(KNOWLEDGE_DIR.glob("*.md"))]
+
+
+def unresolved_placeholders():
+    """Return deployment placeholders still present in the loaded knowledge."""
+    text = load()
+    return [placeholder for placeholder in PLACEHOLDERS if placeholder in text]

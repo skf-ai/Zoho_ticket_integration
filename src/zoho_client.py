@@ -4,12 +4,19 @@ Credentials come from src/config.py (Secrets Manager in AWS, env vars locally).
 """
 
 import requests
+import time
 
 from . import config
+
+_access_token = None
+_access_token_expires_at = 0.0
 
 
 def get_access_token():
     """Exchange the long-lived refresh token for a short-lived access token."""
+    global _access_token, _access_token_expires_at
+    if _access_token and time.monotonic() < _access_token_expires_at:
+        return _access_token
     print("Refreshing Zoho access token...")
     payload = {
         "refresh_token": config.require("zoho_refresh_token"),
@@ -24,7 +31,12 @@ def get_access_token():
         print(f"Error in token response: {token_data}")
         return None
     print("Successfully refreshed access token.")
-    return token_data["access_token"]
+    _access_token = token_data["access_token"]
+    # Zoho normally returns expires_in=3600. Refresh one minute early and use a
+    # conservative fallback if the field is absent.
+    lifetime = max(int(token_data.get("expires_in", 3600)) - 60, 60)
+    _access_token_expires_at = time.monotonic() + lifetime
+    return _access_token
 
 
 def _headers(access_token):
@@ -47,7 +59,8 @@ def find_contact_by_phone(phone, access_token):
         data = resp.json().get("data", [])
         if data:
             return data[0]["id"]
-    return None
+        return None
+    resp.raise_for_status()
 
 
 def create_contact(name, phone, access_token):

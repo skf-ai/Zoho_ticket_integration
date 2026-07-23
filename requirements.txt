@@ -1,10 +1,7 @@
-requests
-boto3
-anthropic
+requests==2.34.2
+boto3==1.43.54
+anthropic==0.118.0
 
 # Windows has no system timezone database; zoneinfo needs this for Asia/Kolkata.
 # Harmless on Linux/Lambda.
-tzdata
-
-pytest
-requests-mock
+tzdata==2026.3
