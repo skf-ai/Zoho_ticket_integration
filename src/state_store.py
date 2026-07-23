@@ -1,34 +1,52 @@
-"""Per-user conversation state, stored in DynamoDB.
+"""Per-conversation state in DynamoDB.
 
-WhatsApp webhooks are stateless, so the bot needs to remember where each user is
-in the flow (which category they picked, whether we're waiting for a free-text
-query, which ticket is theirs). One item per WhatsApp number.
+One item per WhatsApp number. The item holds three things:
 
-Table: config.STATE_TABLE
-  partition key: wa_id (string)  -- the user's WhatsApp number
-  attributes:    step, category, ticket_id, updated_at
+  1. Conversation memory -- the recent message history the agent reasons over.
+  2. Ticket lifecycle -- which ticket this student has open and what stage it is at.
+  3. The next scheduled action -- when the accountability engine should next
+     nudge, prompt, or auto-close.
 
-Also supports reverse lookup (ticket_id -> wa_id) for the resolve loop, via a
-scan fallback; a GSI on ticket_id can be added later if volume grows.
+## Table shape
 
-Tested on Day 2.
+    Table: whatsapp_conversation_state
+      PK: wa_id (S)
+
+    GSI "ticket-index"
+      PK: ticket_id (S)
+      -- lets the Zoho webhook map a resolved ticket back to a student in one
+         lookup. The previous implementation did a full table Scan for this,
+         which gets slower and more expensive with every student ever served.
+
+    GSI "due-index"
+      PK: due_bucket (S)   -- always the literal "DUE"
+      SK: next_action_at (S, ISO-8601 UTC, lexicographically sortable)
+      -- the sweeper queries this one index for everything now due. A single
+         partition is fine at this volume (hundreds of open tickets, not
+         millions) and keeps the query to one cheap call per sweep.
+
+Both indexes are *sparse*: when a ticket closes we delete `ticket_id`,
+`due_bucket`, and `next_action_at`, so finished conversations fall out of the
+indexes entirely and cost nothing to query around.
+
+Ticket status values: none | open | awaiting_verification | closed
 """
 
 import boto3
+from boto3.dynamodb.conditions import Key
 
-from . import config
+from . import config, workdays
 
-# Conversation steps.
-STEP_IDLE = "idle"                # nothing in progress / start
-STEP_AWAITING_CATEGORY = "awaiting_category"
-STEP_AWAITING_SOLVED = "awaiting_solved"      # sent FAQ, waiting Yes/No
-STEP_AWAITING_QUERY = "awaiting_query"        # "Others", waiting free text
-STEP_AWAITING_FEEDBACK = "awaiting_feedback"  # ticket resolved, waiting Yes/No
+DUE_BUCKET = "DUE"
+
+# How many messages of history to keep. Long enough for a support conversation
+# to stay coherent, short enough to bound the token cost of every turn.
+MAX_HISTORY_MESSAGES = 20
 
 _table = None
 
 
-def _get_table():
+def _t():
     global _table
     if _table is None:
         _table = boto3.resource(
@@ -37,38 +55,270 @@ def _get_table():
     return _table
 
 
+# --- reads ---------------------------------------------------------------------
+
 def get_state(wa_id):
-    """Return the state dict for a user, or a fresh idle state."""
-    resp = _get_table().get_item(Key={"wa_id": wa_id})
-    return resp.get("Item") or {"wa_id": wa_id, "step": STEP_IDLE}
-
-
-def set_state(wa_id, step, category=None, ticket_id=None):
-    """Create/replace a user's state. `updated_at` is passed by the caller-free
-    design as a server timestamp would require it; we store step/category/ticket
-    only and rely on DynamoDB item overwrite semantics."""
-    item = {"wa_id": wa_id, "step": step}
-    if category is not None:
-        item["category"] = category
-    if ticket_id is not None:
-        item["ticket_id"] = ticket_id
-    _get_table().put_item(Item=item)
+    """Return this student's state, or a fresh empty one."""
+    item = _t().get_item(Key={"wa_id": wa_id}).get("Item")
+    if not item:
+        return {"wa_id": wa_id, "history": [], "ticket_status": "none"}
+    item.setdefault("history", [])
+    item.setdefault("ticket_status", "none")
     return item
 
 
-def clear_state(wa_id):
-    """Reset a user back to idle (end of a completed flow)."""
-    _get_table().put_item(Item={"wa_id": wa_id, "step": STEP_IDLE})
-
-
-def find_wa_id_by_ticket(ticket_id):
-    """Reverse lookup used by the resolve loop. Scans for the matching ticket.
-
-    Fine for low volume; add a GSI on ticket_id if this table grows large.
-    """
-    resp = _get_table().scan(
-        FilterExpression="ticket_id = :t",
-        ExpressionAttributeValues={":t": str(ticket_id)},
+def find_by_ticket(ticket_id):
+    """Map a ticket id back to a conversation. Used by the Zoho webhook."""
+    resp = _t().query(
+        IndexName="ticket-index",
+        KeyConditionExpression=Key("ticket_id").eq(str(ticket_id)),
+        Limit=1,
     )
     items = resp.get("Items", [])
-    return items[0]["wa_id"] if items else None
+    return items[0] if items else None
+
+
+def due_now(limit=100):
+    """Conversations whose next scheduled action is due. Drives the sweeper."""
+    resp = _t().query(
+        IndexName="due-index",
+        KeyConditionExpression=(
+            Key("due_bucket").eq(DUE_BUCKET)
+            & Key("next_action_at").lte(workdays.iso(workdays.now_utc()))
+        ),
+        Limit=limit,
+    )
+    return resp.get("Items", [])
+
+
+# --- conversation memory -------------------------------------------------------
+
+def append_history(wa_id, messages):
+    """Append turns to the conversation and trim to the retention window.
+
+    Trimming keeps the *most recent* messages. We drop from the front rather than
+    summarising: support conversations are short, and a summarisation step would
+    add cost and a failure mode for little gain.
+    """
+    state = get_state(wa_id)
+    history = list(state.get("history", [])) + list(messages)
+
+    if len(history) > MAX_HISTORY_MESSAGES:
+        history = history[-MAX_HISTORY_MESSAGES:]
+        # Never start the window with a tool result -- it would reference a
+        # tool_use block that has been trimmed away, which providers reject.
+        while history and _is_orphan_tool_result(history[0]):
+            history.pop(0)
+
+    _t().update_item(
+        Key={"wa_id": wa_id},
+        UpdateExpression="SET history = :h, last_activity_at = :now",
+        ExpressionAttributeValues={
+            ":h": history,
+            ":now": workdays.iso(workdays.now_utc()),
+        },
+    )
+    return history
+
+
+def _is_orphan_tool_result(message):
+    content = message.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(b.get("type") == "tool_result" for b in content)
+
+
+def clear_history(wa_id):
+    """Drop conversation memory but keep ticket state. Used on '/reset'."""
+    _t().update_item(
+        Key={"wa_id": wa_id},
+        UpdateExpression="SET history = :empty",
+        ExpressionAttributeValues={":empty": []},
+    )
+
+
+# --- ticket lifecycle ----------------------------------------------------------
+
+def open_ticket(wa_id, ticket_id, category, created_at, sla_due_at):
+    """Record a newly raised ticket and schedule the first admin nudge."""
+    from . import sla  # imported here to avoid a circular import at module load
+
+    first_nudge = sla.first_nudge_at(created_at)
+    _t().update_item(
+        Key={"wa_id": wa_id},
+        UpdateExpression=(
+            "SET ticket_id = :tid, ticket_status = :st, category = :cat, "
+            "ticket_created_at = :created, sla_due_at = :due, "
+            "admin_nudges = :zero, due_bucket = :bucket, next_action_at = :next"
+        ),
+        ExpressionAttributeValues={
+            ":tid": str(ticket_id),
+            ":st": "open",
+            ":cat": category,
+            ":created": workdays.iso(created_at),
+            ":due": workdays.iso(sla_due_at),
+            ":zero": 0,
+            ":bucket": DUE_BUCKET,
+            ":next": workdays.iso(first_nudge),
+        },
+    )
+
+
+def record_nudge(wa_id, next_action_at):
+    """Increment the admin nudge counter and schedule the following action."""
+    _t().update_item(
+        Key={"wa_id": wa_id},
+        UpdateExpression=(
+            "SET admin_nudges = if_not_exists(admin_nudges, :zero) + :one, "
+            "last_nudge_at = :now, next_action_at = :next"
+        ),
+        ExpressionAttributeValues={
+            ":zero": 0,
+            ":one": 1,
+            ":now": workdays.iso(workdays.now_utc()),
+            ":next": workdays.iso(next_action_at),
+        },
+    )
+
+
+def await_verification(wa_id, prompted_at, auto_close_at=None):
+    """Admin marked the work done; we have asked the student to confirm.
+
+    The next wake-up is the *reminder* time, not the auto-close time. Waking at
+    the auto-close time skipped the reminder entirely, so a student who missed
+    one message lost their ticket without ever being chased. `auto_close_at` is
+    accepted for backwards compatibility and ignored -- sla.decide() derives the
+    deadline from verification_prompted_at.
+    """
+    from . import sla
+
+    _t().update_item(
+        Key={"wa_id": wa_id},
+        UpdateExpression=(
+            "SET ticket_status = :st, verification_prompted_at = :now, "
+            "student_reminders = :zero, "
+            "due_bucket = :bucket, next_action_at = :next"
+        ),
+        ExpressionAttributeValues={
+            ":st": "awaiting_verification",
+            ":now": workdays.iso(prompted_at),
+            ":zero": 0,
+            ":bucket": DUE_BUCKET,
+            ":next": workdays.iso(sla.reminder_due_at(prompted_at)),
+        },
+    )
+
+
+def set_next_action(wa_id, next_action_at):
+    """Move a conversation's wake-up time without counting a nudge.
+
+    Kept separate from record_nudge() on purpose: the sweeper previously used
+    record_nudge() for the 'nothing due yet' case, which incremented the
+    admin-reminder counter for reminders that were never sent. The ticket then
+    hit its nudge quota early, the admin was chased fewer times than designed,
+    and the ticket auto-closed with nobody having been contacted.
+    """
+    _t().update_item(
+        Key={"wa_id": wa_id},
+        UpdateExpression="SET next_action_at = :next",
+        ExpressionAttributeValues={":next": workdays.iso(next_action_at)},
+    )
+
+
+def reopen_ticket(wa_id, reopened_at):
+    """Student said it is still broken. Back to open, clock restarted."""
+    from . import sla
+
+    _t().update_item(
+        Key={"wa_id": wa_id},
+        UpdateExpression=(
+            "SET ticket_status = :st, admin_nudges = :zero, "
+            "sla_due_at = :due, due_bucket = :bucket, next_action_at = :next "
+            "REMOVE verification_prompted_at"
+        ),
+        ExpressionAttributeValues={
+            ":st": "open",
+            ":zero": 0,
+            ":due": workdays.iso(workdays.add_working_days(reopened_at, 3)),
+            ":bucket": DUE_BUCKET,
+            ":next": workdays.iso(sla.first_nudge_at(reopened_at)),
+        },
+    )
+
+
+def close_ticket(wa_id, reason):
+    """Close out a ticket and drop the item from both sparse indexes.
+
+    Removing ticket_id, due_bucket and next_action_at is what takes this
+    conversation out of the sweeper's queue -- without it, a closed ticket would
+    be re-processed on every sweep forever.
+    """
+    _t().update_item(
+        Key={"wa_id": wa_id},
+        UpdateExpression=(
+            "SET ticket_status = :st, closed_at = :now, closed_reason = :reason "
+            "REMOVE ticket_id, due_bucket, next_action_at"
+        ),
+        ExpressionAttributeValues={
+            ":st": "closed",
+            ":now": workdays.iso(workdays.now_utc()),
+            ":reason": reason,
+        },
+    )
+
+
+def record_student_reminder(wa_id, next_action_at):
+    """Count a reminder sent to the student and set the next wake-up."""
+    _t().update_item(
+        Key={"wa_id": wa_id},
+        UpdateExpression=(
+            "SET student_reminders = if_not_exists(student_reminders, :z) + :one, "
+            "next_action_at = :next"
+        ),
+        ExpressionAttributeValues={
+            ":z": 0,
+            ":one": 1,
+            ":next": workdays.iso(next_action_at),
+        },
+    )
+
+
+def mark_processed(message_id):
+    """Claim a WhatsApp message id. Returns False if it was already handled.
+
+    Meta retries a webhook whenever we do not answer 200 fast enough, and can
+    redeliver the same message more than once regardless. Without this claim, a
+    retry would run the agent twice and could raise two tickets for one problem.
+
+    The claim is a conditional write on a reserved key in the same table, with a
+    TTL so these rows clean themselves up. Conditional-write semantics make the
+    check atomic even when two Lambdas process the redelivery concurrently.
+    """
+    from botocore.exceptions import ClientError
+
+    now = workdays.now_utc()
+    try:
+        _t().put_item(
+            Item={
+                "wa_id": f"msg#{message_id}",
+                "processed_at": workdays.iso(now),
+                # DynamoDB TTL expects epoch seconds. 24h is far longer than
+                # Meta's retry window.
+                "expires_at": int(now.timestamp()) + 86400,
+            },
+            ConditionExpression="attribute_not_exists(wa_id)",
+        )
+        return True
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return False
+        raise
+
+
+def touch_activity(wa_id):
+    """Record that the student just said something. Inactivity timers read this."""
+    _t().update_item(
+        Key={"wa_id": wa_id},
+        UpdateExpression="SET last_activity_at = :now",
+        ExpressionAttributeValues={":now": workdays.iso(workdays.now_utc())},
+    )

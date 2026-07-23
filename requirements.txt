@@ -1,4 +1,10 @@
 requests
 boto3
+anthropic
+
+# Windows has no system timezone database; zoneinfo needs this for Asia/Kolkata.
+# Harmless on Linux/Lambda.
+tzdata
+
 pytest
 requests-mock

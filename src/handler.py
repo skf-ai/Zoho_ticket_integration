@@ -1,23 +1,31 @@
 """AWS Lambda entry point.
 
-Routes three kinds of request (API Gateway HTTP API / proxy integration):
+Routes four kinds of request (API Gateway HTTP API / proxy integration):
 
   GET  /whatsapp      -> Meta webhook verification (hub.challenge handshake)
-  POST /whatsapp      -> inbound WhatsApp message  -> bot.handle_inbound
-  POST /zoho-webhook  -> Zoho Desk 'ticket resolved' -> send feedback prompt
+  POST /whatsapp      -> inbound WhatsApp message -> agent.handle_inbound
+  POST /zoho-webhook  -> Zoho fires when a ticket is Resolved -> ask the student
+  GET  /health        -> readiness probe for deployment checks
 
-The verification logic mirrors the original ingress Lambda (Node) stub, ported
-to Python. Signature verification (X-Hub-Signature-256) is added on Day 6/7.
+Two rules govern everything here:
+
+  * Always return 200 to Meta. A non-200 makes Meta retry, and repeated failures
+    degrade the number's quality rating and can get the webhook disabled. Errors
+    are logged and swallowed, never surfaced as a status code.
+  * Never process the same message twice. Meta redelivers; state_store's
+    conditional claim makes that safe.
 """
 
+import hashlib
+import hmac
 import json
 
-from . import bot, config, faq, state_store, whatsapp_client, zoho_client
+from . import agent, config, sla, state_store, whatsapp_client, workdays
+
+TPL_STUDENT_VERIFY = "issue_resolved_check"
 
 
 def lambda_handler(event, context):
-    print(f"Event: {json.dumps(event)[:2000]}")
-
     method = (
         event.get("requestContext", {}).get("http", {}).get("method")
         or event.get("httpMethod")
@@ -29,8 +37,9 @@ def lambda_handler(event, context):
         or ""
     )
 
-    # --- Meta webhook verification handshake --------------------------------
     if method == "GET":
+        if "health" in path:
+            return _resp(200, json.dumps(agent.health()))
         return _verify_webhook(event)
 
     if method == "POST":
@@ -54,31 +63,64 @@ def _verify_webhook(event):
     return _resp(400, "Missing challenge")
 
 
-# --- POST: inbound WhatsApp message -------------------------------------------
+# --- POST: inbound WhatsApp message --------------------------------------------
 
 def _handle_whatsapp_inbound(event):
-    body = event.get("body")
-    if isinstance(body, str):
-        try:
-            body = json.loads(body or "{}")
-        except json.JSONDecodeError:
-            body = {}
+    raw = event.get("body") or ""
+
+    if not _signature_ok(event, raw):
+        # Someone posted to our endpoint without Meta's signature. Do not process
+        # it, but still answer 200 so we reveal nothing about what we accept.
+        print("[handler] rejected inbound with bad or missing signature")
+        return _resp(200, "ok")
+
+    try:
+        body = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return _resp(200, "ok")
 
     for wa_id, username, message in _extract_messages(body):
+        message_id = message.get("message_id")
+        if message_id and not state_store.mark_processed(message_id):
+            print(f"[handler] duplicate delivery of {message_id}, skipping")
+            continue
         try:
-            bot.handle_inbound(wa_id, username, message)
+            agent.handle_inbound(wa_id, username, message)
         except Exception as e:  # noqa: BLE001 - never fail Meta's webhook
-            print(f"[handler] bot error for {wa_id}: {e}")
+            print(f"[handler] agent error for {wa_id}: {e}")
 
-    # Always 200 so Meta doesn't retry/disable the webhook.
     return _resp(200, "ok")
 
 
-def _extract_messages(body):
-    """Yield (wa_id, username, normalized_message) from a Meta webhook payload.
+def _signature_ok(event, raw_body):
+    """Verify Meta's X-Hub-Signature-256 over the raw request body.
 
-    Normalized message: {"type": "text"|"button", "text": str, "id": str|None}
+    Without this, anyone who learns the endpoint URL can post fabricated messages
+    and make the agent raise tickets or reply to arbitrary numbers. The secret is
+    the Meta app secret; if it is not configured we log loudly and allow through,
+    so the system still works before that secret is filled in -- but the
+    deployment checklist treats an unset app secret as a go-live blocker.
     """
+    app_secret = config.get("whatsapp_app_secret")
+    if not app_secret:
+        print("[handler] WARNING: whatsapp_app_secret unset, signature not verified")
+        return True
+
+    headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+    provided = headers.get("x-hub-signature-256", "")
+    if not provided.startswith("sha256="):
+        return False
+
+    expected = "sha256=" + hmac.new(
+        app_secret.encode("utf-8"),
+        raw_body.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, provided)
+
+
+def _extract_messages(body):
+    """Yield (wa_id, username, normalized_message) from a Meta webhook payload."""
     for entry in body.get("entry", []):
         for change in entry.get("changes", []):
             value = change.get("value", {})
@@ -87,56 +129,76 @@ def _extract_messages(body):
             if contacts:
                 username = contacts[0].get("profile", {}).get("name", "")
             for msg in value.get("messages", []):
-                wa_id = msg.get("from")
-                yield wa_id, username, _normalize_message(msg)
+                yield msg.get("from"), username, _normalize_message(msg)
 
 
 def _normalize_message(msg):
+    """Flatten Meta's message shapes into {type, text, id, message_id}.
+
+    Button and list replies are converted to their visible title text, so the
+    agent reads a tap the same way it reads someone typing the same words.
+    """
+    base = {"message_id": msg.get("id")}
     mtype = msg.get("type")
+
     if mtype == "text":
-        return {"type": "text", "text": msg.get("text", {}).get("body", ""), "id": None}
+        return {**base, "type": "text",
+                "text": msg.get("text", {}).get("body", ""), "id": None}
+
     if mtype == "interactive":
         inter = msg.get("interactive", {})
-        if inter.get("type") == "list_reply":
-            r = inter["list_reply"]
-            return {"type": "button", "text": r.get("title", ""), "id": r.get("id")}
-        if inter.get("type") == "button_reply":
-            r = inter["button_reply"]
-            return {"type": "button", "text": r.get("title", ""), "id": r.get("id")}
+        reply = inter.get("list_reply") or inter.get("button_reply") or {}
+        return {**base, "type": "button",
+                "text": reply.get("title", ""), "id": reply.get("id")}
+
     if mtype == "button":  # template quick-reply
         b = msg.get("button", {})
-        return {"type": "button", "text": b.get("text", ""), "id": b.get("payload")}
-    return {"type": mtype or "unknown", "text": "", "id": None}
+        return {**base, "type": "button",
+                "text": b.get("text", ""), "id": b.get("payload")}
+
+    return {**base, "type": mtype or "unknown", "text": "", "id": None}
 
 
-# --- POST: Zoho resolve webhook (Day 5) ---------------------------------------
+# --- POST: Zoho resolve webhook ------------------------------------------------
 
 def _handle_zoho_webhook(event):
-    """Zoho fires this when a ticket is Resolved. Send the feedback prompt.
+    """Zoho fires this when a ticket is set to Resolved.
 
-    Wired fully on Day 5 (needs the Zoho Workflow Rule configured to POST here
-    with the ticket id). For now it demonstrates the intended handling.
+    Resolved is not Closed. We ask the student whether it is genuinely fixed and
+    move the ticket to awaiting_verification; only their confirmation closes it.
     """
-    body = event.get("body")
-    if isinstance(body, str):
-        try:
-            body = json.loads(body or "{}")
-        except json.JSONDecodeError:
-            body = {}
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except json.JSONDecodeError:
+        return _resp(400, "Bad JSON")
 
     ticket_id = str(body.get("ticketId") or body.get("id") or "")
     if not ticket_id:
         return _resp(400, "Missing ticketId")
 
-    wa_id = state_store.find_wa_id_by_ticket(ticket_id)
-    if not wa_id:
-        print(f"[zoho-webhook] no user mapped to ticket {ticket_id}")
+    item = state_store.find_by_ticket(ticket_id)
+    if not item:
+        # A ticket raised outside WhatsApp, or one we have already closed.
+        print(f"[zoho-webhook] no conversation mapped to ticket {ticket_id}")
         return _resp(200, "no mapping")
 
-    # >24h window => must be a pre-approved template (submitted Day 1).
-    whatsapp_client.send_template(wa_id, template_name="issue_resolved_check")
-    state_store.set_state(wa_id, state_store.STEP_AWAITING_FEEDBACK,
-                          ticket_id=ticket_id)
+    wa_id = item["wa_id"]
+    if item.get("ticket_status") == "awaiting_verification":
+        print(f"[zoho-webhook] {ticket_id} already awaiting verification")
+        return _resp(200, "already prompted")
+
+    now = workdays.now_utc()
+    whatsapp_client.send_template(
+        wa_id, TPL_STUDENT_VERIFY,
+        components=[{
+            "type": "body",
+            "parameters": [{"type": "text", "text": ticket_id}],
+        }],
+    )
+    state_store.await_verification(
+        wa_id, prompted_at=now, auto_close_at=sla.verification_deadline(now)
+    )
+    print(f"[zoho-webhook] asked {wa_id} to confirm ticket {ticket_id}")
     return _resp(200, "prompt sent")
 
 
