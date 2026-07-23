@@ -50,7 +50,30 @@ MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "1024"))
 
 # Hard ceiling on a single reply. WhatsApp messages are short, and a runaway
 # generation is both a bad user experience and a cost incident.
-_TIMEOUT_SECONDS = float(os.environ.get("LLM_TIMEOUT_SECONDS", "12"))
+#
+# ## The timeout budget -- get this wrong and the system strands students
+#
+# API Gateway hangs up at 29s, so the whole webhook turn must finish inside it,
+# INCLUDING time for the agent to catch a failure and send the fallback reply.
+# The SDK also retries on its own, so the real cost of one call is
+# timeout x (1 + max_retries) -- which is how a "12 second" limit became 36
+# seconds and got the Lambda killed before any fallback could run. A killed
+# Lambda leaves half-finished reservations behind, which is what stranded a
+# student permanently.
+#
+# Budget, worst case:
+#     LLM call     8s
+#     tool (Zoho)  8s
+#     LLM call     8s
+#     fallback     2s
+#     -------------------
+#                 26s   < 29s
+#
+# Retries are disabled here on purpose: a retry inside the request path buys
+# little (Meta will redeliver the whole message anyway if we fail) and costs the
+# headroom the fallback needs.
+_TIMEOUT_SECONDS = float(os.environ.get("LLM_TIMEOUT_SECONDS", "8"))
+_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "0"))
 
 
 class LLMError(RuntimeError):
@@ -128,6 +151,9 @@ def _call_anthropic(messages, tools):
     client = anthropic.Anthropic(
         api_key=config.get("llm_api_key") or os.environ.get("ANTHROPIC_API_KEY"),
         timeout=_TIMEOUT_SECONDS,
+        # Without this the SDK silently retries twice, tripling the worst-case
+        # wall time and blowing the budget documented above.
+        max_retries=_MAX_RETRIES,
     )
 
     response = client.messages.create(

@@ -28,13 +28,22 @@ is implemented as the two `auto_close_*` branches; nothing else closes a ticket
 except the student explicitly confirming.
 """
 
-from datetime import time
+from datetime import timedelta
 
 from . import workdays
 
 SLA_WORKING_DAYS = 3
 MAX_ADMIN_NUDGES = 2
 STUDENT_REMINDERS = 1
+
+# How long a half-finished operation may sit before we treat it as abandoned.
+#
+# Both are "the Lambda died mid-operation" recovery windows, and both must be
+# comfortably longer than the Lambda timeout so we never declare a still-running
+# request stuck. They are short in wall-clock terms because a student is blocked
+# from raising any ticket for the whole window.
+STUCK_CREATION_MINUTES = 15   # reserved a ticket, never heard back from Zoho
+STUCK_PROMPT_MINUTES = 5      # reserved the resolve callback, never sent the prompt
 
 
 def _at_nine(dt):
@@ -67,9 +76,73 @@ def decide(state, now=None):
     if status == "awaiting_verification":
         return _decide_awaiting(state, now)
     if status == "creating":
-        return {"action": "alert_stuck_creation", "next_at": None,
-                "reason": "ticket creation did not finish"}
+        return _decide_creating(state, now)
+    if status == "verification_prompting":
+        return _decide_prompting(state, now)
     return {"action": "none", "next_at": None, "reason": f"status={status}"}
+
+
+def _decide_creating(state, now):
+    """A ticket reservation that has not completed.
+
+    Normally this lasts milliseconds: reserve, call Zoho, write the ticket id.
+    It only persists if the Lambda died in between. Until the window expires we
+    say nothing -- the request may still be in flight, and declaring it stuck
+    would let a second message create a duplicate Zoho ticket.
+
+    After the window we must act, because the student is blocked from raising
+    ANY ticket while this sits here. We cannot safely retry (Zoho may have
+    created the ticket immediately before the timeout), so we release the block
+    and ask a human to check Zoho for an orphan.
+    """
+    started = _parse(state.get("ticket_creation_started_at"))
+    if started is None:
+        # No timestamp to reason about; treat as stuck rather than leaving the
+        # student blocked forever.
+        return {"action": "recover_stuck_creation", "next_at": None,
+                "reason": "creating with no start time"}
+
+    age = now - started
+    if age < timedelta(minutes=STUCK_CREATION_MINUTES):
+        return {
+            "action": "none",
+            "next_at": started + timedelta(minutes=STUCK_CREATION_MINUTES),
+            "reason": f"ticket creation in progress ({int(age.total_seconds())}s)",
+        }
+
+    return {
+        "action": "recover_stuck_creation",
+        "next_at": None,
+        "reason": f"ticket creation abandoned after {int(age.total_seconds())}s",
+    }
+
+
+def _decide_prompting(state, now):
+    """A resolve callback that reserved the conversation but never sent.
+
+    Safe to recover automatically: nothing was created in Zoho, we simply failed
+    to deliver the "is it fixed?" message. Putting the ticket back to `open`
+    resumes the normal admin chase, and Zoho's own retry (or the next resolve)
+    will prompt the student again.
+    """
+    started = _parse(state.get("verification_prompting_at"))
+    if started is None:
+        return {"action": "recover_stuck_verification", "next_at": None,
+                "reason": "prompting with no start time"}
+
+    age = now - started
+    if age < timedelta(minutes=STUCK_PROMPT_MINUTES):
+        return {
+            "action": "none",
+            "next_at": started + timedelta(minutes=STUCK_PROMPT_MINUTES),
+            "reason": f"verification prompt in progress ({int(age.total_seconds())}s)",
+        }
+
+    return {
+        "action": "recover_stuck_verification",
+        "next_at": None,
+        "reason": f"verification prompt abandoned after {int(age.total_seconds())}s",
+    }
 
 
 def _decide_open(state, now):

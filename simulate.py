@@ -111,12 +111,31 @@ class FakeStore:
         if item.get("ticket_status", "none") not in ("none", "closed"):
             return False
         item["ticket_status"] = "creating"
+        # Production records this so the sweeper can tell an in-flight creation
+        # from an abandoned one. Mirror it, or /sweep behaves differently here
+        # than it will in AWS.
+        item["ticket_creation_started_at"] = workdays.iso(CLOCK.now())
         return True
 
     def release_ticket_creation(self, wa_id):
         item = self._item(wa_id)
         if item.get("ticket_status") == "creating":
             item["ticket_status"] = "none"
+            item.pop("ticket_creation_started_at", None)
+
+    def begin_verification(self, wa_id):
+        item = self._item(wa_id)
+        if item.get("ticket_status") != "open":
+            return False
+        item["ticket_status"] = "verification_prompting"
+        item["verification_prompting_at"] = workdays.iso(CLOCK.now())
+        return True
+
+    def release_verification(self, wa_id):
+        item = self._item(wa_id)
+        if item.get("ticket_status") == "verification_prompting":
+            item["ticket_status"] = "open"
+            item.pop("verification_prompting_at", None)
 
     def record_nudge(self, wa_id, next_action_at):
         item = self._item(wa_id)
@@ -325,6 +344,7 @@ def install_fakes(mock_llm):
 
     for name in ("get_state", "append_history", "touch_activity", "open_ticket",
                  "reserve_ticket_creation", "release_ticket_creation",
+                 "begin_verification", "release_verification",
                  "record_nudge", "record_student_reminder", "await_verification",
                  "reopen_ticket", "close_ticket", "find_by_ticket", "due_now",
                  "mark_processed", "clear_history", "set_next_action"):

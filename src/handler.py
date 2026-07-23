@@ -115,10 +115,17 @@ def _signature_ok(event, raw_body):
     """Verify Meta's X-Hub-Signature-256 over the raw request body.
 
     Without this, anyone who learns the endpoint URL can post fabricated messages
-    and make the agent raise tickets or reply to arbitrary numbers. The secret is
-    the Meta app secret; if it is not configured we log loudly and allow through,
-    so the system still works before that secret is filled in -- but the
-    deployment checklist treats an unset app secret as a go-live blocker.
+    and make the agent raise tickets or send WhatsApp messages to arbitrary
+    numbers at your expense.
+
+    This FAILS CLOSED. An unset or wrong `whatsapp_app_secret` rejects every
+    inbound message rather than waving it through. That is deliberate: an open
+    endpoint is a worse failure than a silent one, and the closed case is loud in
+    the logs and covered by an alarm.
+
+    Consequence to remember when deploying: until `whatsapp_app_secret` is in
+    Secrets Manager, the bot will appear completely dead to students. That is
+    correct behaviour, not a bug. Do not "fix" it by returning True here.
     """
     app_secret = config.get("whatsapp_app_secret")
     if not app_secret:

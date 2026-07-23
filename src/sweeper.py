@@ -88,9 +88,15 @@ def _perform(action, item, decision):
         if _nudge_admin(item):
             state_store.record_nudge(wa_id, sla.next_after_nudge())
         else:
-            print(f"[sweeper] admin nudge NOT sent for ticket {ticket_id}; "
-                  f"will retry next working day")
+            # Advance the wake-up first so the retry does not double-send, then
+            # raise. A nudge that silently fails to reach the admin is the exact
+            # failure this system exists to prevent -- it must light the alarm,
+            # not print a line nobody reads.
             state_store.set_next_action(wa_id, sla.next_after_nudge())
+            raise RuntimeError(
+                f"admin nudge for ticket {ticket_id} was not delivered; the LMS "
+                f"admin has NOT been told about this ticket"
+            )
 
     elif action == "auto_close_admin":
         _auto_close_admin(item)
@@ -105,19 +111,40 @@ def _perform(action, item, decision):
                 wa_id, decision.get("next_at") or workdays.now_utc()
             )
         else:
-            print(f"[sweeper] student reminder NOT sent for ticket {ticket_id}")
+            # Same reasoning as the admin nudge: advance first so a retry cannot
+            # double-send, then fail loudly. An undelivered reminder means the
+            # ticket auto-closes having chased the student only once.
             state_store.set_next_action(wa_id, sla.next_after_nudge())
+            raise RuntimeError(
+                f"student reminder for ticket {ticket_id} was not delivered"
+            )
 
     elif action == "auto_close_student":
         _auto_close_student(item)
 
-    elif action == "alert_stuck_creation":
-        # Zoho may have created the ticket immediately before a timeout. A blind
-        # retry could duplicate it, so require an operator to reconcile safely.
+    elif action == "recover_stuck_creation":
+        # The Lambda died between reserving and hearing back from Zoho. Two bad
+        # outcomes are possible and we must choose between them:
+        #   - leave the reservation: the student can never raise another ticket;
+        #   - release it: a duplicate Zoho ticket may exist if Zoho did create
+        #     one just before the timeout.
+        # A blocked student is worse and self-perpetuating, so release, then
+        # raise ONCE so the error alarm fires and a human checks Zoho for an
+        # orphan. State is already fixed, so the next sweep will not re-raise.
+        state_store.release_ticket_creation(wa_id)
         raise RuntimeError(
-            f"ticket creation for *{str(wa_id)[-4:]} is stuck; reconcile Zoho "
-            "before releasing the DynamoDB reservation"
+            f"released a stuck ticket reservation for *{str(wa_id)[-4:]} "
+            f"({decision['reason']}); check Zoho for an orphaned ticket with no "
+            f"WhatsApp conversation attached"
         )
+
+    elif action == "recover_stuck_verification":
+        # Safe to fix silently: nothing was created in Zoho, we only failed to
+        # send the "is it fixed?" message. Back to open so the admin chase
+        # resumes; Zoho's retry or the next resolve will prompt again.
+        state_store.release_verification(wa_id)
+        print(f"[sweeper] recovered stuck verification prompt for "
+              f"*{str(wa_id)[-4:]} ({decision['reason']}); ticket back to open")
 
     elif action == "none":
         # Nothing due yet; move the wake-up forward WITHOUT counting a nudge.
