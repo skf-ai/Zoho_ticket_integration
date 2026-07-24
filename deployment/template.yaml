@@ -12,7 +12,13 @@ Parameters:
   StateTableName:
     Type: String
     Default: whatsapp_conversation_state_v2
-    Description: V2 table; the legacy table is retained during replacement.
+    # A table named whatsapp_conversation_state already exists in this account
+    # (created by hand during early testing, ~2 test items, no indexes, not owned
+    # by any stack). This stack cannot manage a table it did not create, and the
+    # old one lacks the two indexes the accountability engine needs. So the stack
+    # owns a fresh _v2 table. The old table is inert and can be deleted by hand
+    # once this system is proven; see RUNBOOK.md.
+    Description: Fresh stack-owned table; the pre-existing v1 test table is left untouched.
   AlertEmail:
     Type: String
     Default: ''
@@ -30,7 +36,12 @@ Globals:
         SECRET_NAME: !Ref SecretName
         STATE_TABLE: !Ref ConversationStateTable
         GRAPH_API_VERSION: v21.0
-        LLM_TIMEOUT_SECONDS: '12'
+        # Must fit inside the webhook Lambda's timeout (below) even for a worst
+        # case of two model calls plus a tool call plus the fallback reply.
+        # Anything larger reintroduces the mid-request kill that stranded tickets.
+        # See the budget comment in src/llm.py.
+        LLM_TIMEOUT_SECONDS: '8'
+        LLM_MAX_RETRIES: '0'
 
 Resources:
   ConversationStateTable:
@@ -82,7 +93,10 @@ Resources:
       Handler: src/handler.lambda_handler
       FunctionName: whatsapp-zoho-webhook
       CodeUri: ../
-      Timeout: 25
+      # 29s is the API Gateway ceiling. The agent's own budget (src/llm.py) fits
+      # well inside this in the common case; the sweeper's stuck-state recovery
+      # is the safety net for the rare turn that is killed here anyway.
+      Timeout: 29
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ConversationStateTable
@@ -211,6 +225,59 @@ Resources:
       Threshold: 1
       ComparisonOperator: LessThanThreshold
       TreatMissingData: breaching
+      AlarmActions:
+        - !Ref OperationsTopic
+
+  # A scheduled action that fails all its retries lands here. Without this alarm
+  # the dead-letter queue fills silently and nobody learns a ticket stopped
+  # being chased.
+  SweeperDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlertEmail
+    Properties:
+      AlarmDescription: A scheduled accountability action failed every retry and landed in the dead-letter queue.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt SweeperDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OperationsTopic
+
+  # Turns the single most likely silent outage -- a wrong or unset app secret,
+  # which makes fail-closed signature checking reject EVERY student message --
+  # into a page instead of a system that looks healthy while dropping everyone.
+  SignatureRejectMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: WebhookLogGroup
+    Properties:
+      LogGroupName: /aws/lambda/whatsapp-zoho-webhook
+      FilterPattern: '"rejected inbound with bad or missing signature"'
+      MetricTransformations:
+        - MetricNamespace: WhatsappZoho
+          MetricName: SignatureRejections
+          MetricValue: '1'
+          DefaultValue: 0
+
+  SignatureRejectAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlertEmail
+    Properties:
+      AlarmDescription: Inbound WhatsApp messages are being rejected for a bad or missing signature -- likely a wrong or unset whatsapp_app_secret, which silences every student.
+      Namespace: WhatsappZoho
+      MetricName: SignatureRejections
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
       AlarmActions:
         - !Ref OperationsTopic
 

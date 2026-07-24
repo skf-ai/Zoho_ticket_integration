@@ -81,8 +81,25 @@ def _handle_whatsapp_inbound(event):
         return _resp(200, "ok")
 
     if knowledge.unresolved_placeholders():
+        # The knowledge base still has <LMS_URL>/<SUPPORT_EMAIL> placeholders, so
+        # we must not answer -- we would tell students to visit "<LMS_URL>". But
+        # a sustained 503 to Meta risks the webhook being disabled, so we ACK
+        # with 200 and send a brief holding message instead. In practice the
+        # deploy order (fix placeholders, THEN point Meta here) means real
+        # traffic never reaches this branch; it is a safety net, not a mode.
         print("[handler] refusing inbound: knowledge placeholders remain")
-        return _resp(503, "not ready")
+        try:
+            for wa_id, _username, _message in _extract_messages(
+                json.loads(raw or "{}")
+            ):
+                whatsapp_client.send_text(
+                    wa_id,
+                    "Thanks for your message! Our support assistant is being set "
+                    "up right now. Please try again a little later.",
+                )
+        except Exception:  # noqa: BLE001 - never fail on the not-ready path
+            pass
+        return _resp(200, "ok")
 
     try:
         body = json.loads(raw or "{}")

@@ -2,7 +2,7 @@
 
 ## What this service covers
 
-Help with the Moodle LMS at <LMS_URL> for enrolled students: logging in,
+Help with the Moodle LMS at https://lms.siddhantaknowledge.org/ for enrolled students: logging in,
 receiving credentials, finding courses, accessing content, and questions about
 grades and certificates.
 
@@ -10,7 +10,7 @@ grades and certificates.
 
 Academic questions about course material, requests to change grades, admissions
 or fee queries, and anything requiring identity verification beyond the WhatsApp
-number the student is messaging from. Direct these to <SUPPORT_EMAIL>.
+number the student is messaging from. Direct these to lmsadmin@srisiddhanta.org.
 
 ## Service level promised to students
 

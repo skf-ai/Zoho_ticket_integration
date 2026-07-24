@@ -10,7 +10,12 @@ name: Deploy
 # One-time setup is documented in DEPLOYMENT.md.
 
 on:
-  workflow_dispatch: {}      # manual "Run workflow" button
+  workflow_dispatch:         # manual "Run workflow" button
+    inputs:
+      alert_email:
+        description: "Ops email for alarms. Leave blank ONLY if you have set the ALERT_EMAIL repo variable, or you accept deploying with NO monitoring."
+        required: false
+        default: ""
   # push:
   #   branches: ["main"]     # uncomment to auto-deploy on merge to main
 
@@ -53,10 +58,19 @@ jobs:
 
       - name: SAM deploy
         run: |
+          # Alarms only exist when an AlertEmail is passed. Prefer the value typed
+          # into the "Run workflow" box; fall back to a repo variable set once in
+          # Settings -> Secrets and variables -> Actions -> Variables (ALERT_EMAIL).
+          ALERT="${{ github.event.inputs.alert_email }}"
+          if [ -z "$ALERT" ]; then ALERT="${{ vars.ALERT_EMAIL }}"; fi
+          if [ -z "$ALERT" ]; then
+            echo "::warning::Deploying with NO monitoring — no alert_email input and no ALERT_EMAIL variable. A silent outage will look identical to a healthy system. Set one and redeploy."
+          fi
           sam deploy \
             --stack-name whatsapp-zoho-bot \
             --region ap-south-1 \
             --capabilities CAPABILITY_IAM \
             --resolve-s3 \
             --no-confirm-changeset \
-            --no-fail-on-empty-changeset
+            --no-fail-on-empty-changeset \
+            --parameter-overrides AlertEmail="$ALERT"

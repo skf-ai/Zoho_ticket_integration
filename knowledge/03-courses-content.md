@@ -27,7 +27,7 @@ the file itself may be broken or unpublished.
 ## Using a phone
 
 Install the official Moodle app from the Play Store or App Store and enter
-<LMS_URL> as the site address. Log in with the same username and password.
+https://lms.siddhantaknowledge.org/ as the site address. Log in with the same username and password.
 
 ## Quizzes, assignments, and submissions
 

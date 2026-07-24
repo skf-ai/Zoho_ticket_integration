@@ -7,7 +7,7 @@ hours of the enrolment being processed.
 
 1. Ask them to check the spam, junk, and promotions folders.
 2. Ask them to search their inbox for "welcome", "LMS", "Moodle", or
-   "<SUPPORT_EMAIL>" rather than scrolling — the message is easy to miss.
+   "lmsadmin@srisiddhanta.org" rather than scrolling — the message is easy to miss.
 3. Confirm which email address they registered with. Credentials very often go to
    an address the student has forgotten about, or one with a typo.
 4. If enrolment was completed less than 24 hours ago, ask them to wait — the

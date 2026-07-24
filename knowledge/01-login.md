@@ -1,6 +1,6 @@
 # Logging in to the LMS
 
-The learning portal is at <LMS_URL>. Students sign in with the username and
+The learning portal is at https://lms.siddhantaknowledge.org/. Students sign in with the username and
 password sent to their registered email address when they were enrolled.
 
 ## Cannot log in / password not working
@@ -12,7 +12,7 @@ password sent to their registered email address when they were enrolled.
 3. Use the **Forgot password** link on the login page. A reset link goes to the
    registered email address and is valid for a limited time.
 4. If the reset email does not arrive, check the spam and promotions folders and
-   search the inbox for "<LMS_URL>" or "password".
+   search the inbox for "https://lms.siddhantaknowledge.org/" or "password".
 5. Try a different browser, or a private/incognito window, and clear the cache.
 
 If the student has done all of the above and still cannot log in, this needs the
