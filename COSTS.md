@@ -16,12 +16,12 @@ this project can pick it up and keep it running.
 
 | What | Who bills you | Roughly | Paid how |
 |---|---|---|---|
-| AI model (Claude Haiku) | Anthropic | $10–20 / month | Per use, card on file |
+| AI model (GPT-5 mini) | OpenAI | $5–10 / month | Per use, card on file |
 | AWS hosting | Amazon | $2–4 / month | Per use, card on file |
 | WhatsApp messages | Meta | ₹100–200 / month | Per message, card on WABA |
-| Zoho Desk | Zoho | Existing subscription | Per agent, per month |
+| Zoho Desk | Zoho | Existing subscription (Zoho One) | Per agent, per month |
 
-**New spend created by this project: roughly $15–25 / month (₹1,300–2,200).**
+**New spend created by this project: roughly $10–20 / month (₹850–1,700).**
 Zoho was already being paid for before this project started.
 
 Everything is usage-based except Zoho. Nothing here has a minimum commitment or a
@@ -31,29 +31,42 @@ lock-in contract.
 
 ## 2. Each cost in detail
 
-### 2.1 The AI model — Anthropic
+### 2.1 The AI model — OpenAI (GPT-5 mini)
 
 **What it's for:** reading student messages and deciding how to answer.
 
 **How billing works:** per unit of text processed. No subscription, no minimum.
 
-- Model in use: `claude-haiku-4-5` (deliberately the cheap tier — see below)
-- Roughly **$0.006 per student conversation** (about half a rupee)
-- A heavy exam day of 500 conversations costs about **$3**
-- Typical month: **$10–20**
+- Model in use: `gpt-5-mini` — chosen after comparing OpenAI, Google and Anthropic
+- Rate: about **$0.13 per million input tokens, $1.00 per million output**
+- Roughly **$0.002 per student conversation**
+- A heavy exam day of 500 conversations costs well under **$1**
+- Typical month: **$5–10**
 
-**Why the cheap model:** the job is matching a student's problem to a known FAQ
-and deciding whether a human is needed. That sits well inside Haiku's ability. A
-frontier model would cost 5× more for no benefit here. If quality testing later
-shows it missing real cases, raise `LLM_MODEL` — see §5.
+**⚠️ Correction to an earlier version of this file.** A first draft said
+"~$10–20/month on Claude Haiku, with prompt caching cutting the bill ~10×." That
+was wrong on two counts: Haiku costs $1/$5 per million (≈7× GPT-5 mini for this
+workload), and its caching does **not** activate below a 4,096-token prompt while
+our knowledge base is ~2,600 tokens — so on Haiku the KB resent every turn was
+billed at full price. GPT-5 mini is cheaper per token **and** caches at our size
+(OpenAI caches automatically above ~1,024 tokens), so the repeated KB is billed
+at a steep discount. Net: GPT-5 mini is the value winner here.
 
-**Not locked in.** The code talks to models through `src/llm.py`, which is
-provider-neutral. Switching to OpenAI, Google, Groq, or a self-hosted model is a
-change of two environment variables, not a rewrite. Prices at this tier move every
-few months; re-check yearly.
+**Why this model** (chosen neutrally — this project was built with Claude tooling,
+but Claude is *not* the pick): at your volume every option is cheap in rupees, so
+the decision was made on **tool-calling reliability first** (a bad tool call = a
+ticket never created), then **longevity** (won't be retired soon), then cost.
+GPT-5 mini wins that combination. Google Gemini Flash-Lite is marginally cheaper
+but retires Oct 2026 (a forced change) and is less proven at strict tool-calling.
+Claude Haiku is reliable but ~7× the cost here with no caching benefit.
 
-**Where to see spend:** console.anthropic.com → Usage.
-**Set a monthly spend limit there.** Do this on day one.
+**Not locked in.** The code talks to models through `src/llm.py`, provider-neutral.
+Switching to Gemini, Claude, or a self-hosted model is a change of the
+`LLM_PROVIDER`, `LLM_BASE_URL` and `LLM_MODEL` environment variables plus the key
+— not a rewrite. Re-check prices yearly.
+
+**Where to see spend:** platform.openai.com → Usage.
+**Set a monthly spend limit** (Settings → Limits). Do this on day one.
 
 ---
 
@@ -129,16 +142,16 @@ the system looks healthy while doing nothing.
 costs nothing extra — API access is included in the subscription, subject to daily
 limits.
 
-**One thing to verify:** the "student verified it's fixed" loop needs a Zoho
-**Workflow Rule that calls a webhook** when a ticket becomes Resolved. Not every
-plan includes workflow rules — the free tier (3 agents) does not.
+**Plan: Zoho One** (confirmed 2026-07-24). This includes Zoho Desk well above the
+Standard tier, so **Workflow Rules with a webhook/custom-function action are
+available.** The "student verified it's fixed" loop uses that native path: a
+workflow fires our `/zoho-webhook` when a ticket is set to Resolved. No extra
+Zoho cost, and no code workaround needed.
 
-- If your plan supports it: no extra cost.
-- If it does not: either upgrade, **or** use the polling fallback (the scheduled
-  worker checks Zoho for resolved tickets instead of Zoho notifying us). The
-  fallback costs nothing and avoids the upgrade.
-
-**Record your plan here when you check it:** ______________________
+The workflow authenticates to us with a shared secret (`zoho_webhook_secret` in
+the AWS secret), sent either as an `X-Webhook-Secret` header (Custom Function) or
+a `webhook_secret` query parameter (native webhook) — the code accepts both. See
+DEPLOYMENT.md for the exact setup.
 
 **Where to see spend:** zoho.com → Subscriptions.
 
@@ -166,12 +179,13 @@ region ap-south-1. Nothing is stored in the code or in GitHub.
 | `zoho_refresh_token` | Long-lived Zoho login | Breaks if revoked in Zoho console |
 | `zoho_org_id` | 60037340249 | Stable |
 | `zoho_department_id` | 146318000000010772 | Stable |
+| `zoho_webhook_secret` | Shared secret the Zoho resolved-ticket workflow sends back to prove the callback is genuinely from Zoho | ⚠️ **Not yet added — invent any long random string, put the same value in the Zoho workflow** |
 | `whatsapp_token` | Meta access token | ⚠️ **Currently temporary — expires in ~24h** |
 | `whatsapp_phone_number_id` | 1121518577721735 | ⚠️ Currently Meta's **test** number |
 | `whatsapp_waba_id` | 991209477079437 | Stable |
 | `whatsapp_verify_token` | stored in Secrets Manager; rotate if previously exposed | Chosen by us |
 | `whatsapp_app_secret` | Verifies messages truly come from Meta | ⚠️ **Currently empty** |
-| `llm_api_key` | Anthropic API key | Not yet added |
+| `llm_api_key` | OpenAI API key (for GPT-5 mini) | ⚠️ **Not yet added** |
 | `lms_admin_wa_id` | Admin's WhatsApp number for nudges | Not yet added |
 
 ### The three that need fixing before go-live
@@ -194,7 +208,7 @@ Ranked by how bad it is, and how obvious it would be.
 | If this lapses | What happens | Would you notice? |
 |---|---|---|
 | **Meta WhatsApp payment** | Admin nudges and verification prompts stop. Students still get answered. **Tickets silently stop being chased — the exact problem this system was built to fix.** | ❌ **No — this fails invisibly.** Watch for it. |
-| **Anthropic / AI provider** | The bot cannot answer. Falls back to a plain "we're unavailable" message. Ticket chasing keeps working. | ✅ Yes, immediately |
+| **OpenAI / AI provider** | The bot cannot answer. Falls back to a plain "we're unavailable" message. Ticket chasing keeps working. | ✅ Yes, immediately |
 | **AWS account** | Everything stops. | ✅ Yes, immediately |
 | **Zoho Desk** | No tickets can be created or closed. | ✅ Yes, immediately |
 | **`whatsapp_token` expires** | All outbound WhatsApp stops. Students get silence. | ⚠️ Only if someone is watching logs |
@@ -208,11 +222,11 @@ and dangerous. Set a billing alert on the Meta account specifically.
 
 **Safe to do:**
 
-- **Set spend caps** on Anthropic and an AWS billing alarm. Costs nothing, prevents
-  a surprise.
+- **Set spend caps** on OpenAI (Settings → Limits) and an AWS billing alarm. Costs
+  nothing, prevents a surprise.
 - **Set CloudWatch log retention to 30 days.** Logs otherwise accumulate forever.
-- **Keep the cheap model.** `LLM_MODEL=claude-haiku-4-5`. Only raise it if
-  testing shows real failures.
+- **Keep the chosen model.** `LLM_MODEL=gpt-5-mini`. Only change it if testing
+  shows real failures — and remember it's a one-env-var switch either way.
 - **Keep the knowledge base good.** Every question it answers without a ticket
   saves a paid nudge and the admin's time. Improving `knowledge/*.md` is the
   highest-return, zero-cost work available.
@@ -223,15 +237,15 @@ and dangerous. Set a billing alert on the Meta account specifically.
 
 - **Do not reduce admin nudges to zero.** They cost ₹0.115 each and they are the
   entire point of the system.
-- **Leave the prompt-caching line in `src/llm.py` alone.** ⚠️ **Correction:** an
-  earlier version of this document claimed caching cuts the AI bill ~10×. That
-  was wrong. Caching only activates once the fixed part of the prompt exceeds
-  **4,096 tokens**, and the knowledge base is currently around **2,600** — so
-  caching is *inactive today and saving nothing*. The line costs nothing to keep
-  and switches on by itself if the knowledge files grow past that size, which is
-  likely as you add topics. When it does activate, never put a timestamp, name,
-  or ticket number above the cache marker in that file — that silently disables
-  it again with no error.
+- **Keep the prompt sending its stable part first.** With GPT-5 mini, OpenAI
+  caches the repeated prefix (system prompt + knowledge base, ~3,000 tokens)
+  **automatically** above ~1,024 tokens — no code to configure, and it is working
+  today, discounting the biggest recurring cost. The one rule: never put a
+  timestamp, student name, or ticket number ahead of the knowledge base in
+  `src/llm.py`, because that changes the prefix every call and silently switches
+  caching off with no error. (On Claude Haiku this caching would *not* apply —
+  its 4,096-token minimum is above our ~2,600-token knowledge base — which was
+  part of why GPT-5 mini won on cost.)
 - **Do not switch to a WhatsApp reseller** to "simplify". It adds ₹2,000–3,000 a
   month for something you already have direct.
 - **Do not self-host the AI model.** A GPU server costs more per month idle than

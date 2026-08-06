@@ -35,13 +35,20 @@ import os
 
 from . import config, knowledge
 
-PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic")
+PROVIDER = os.environ.get("LLM_PROVIDER", "openai_compatible")
 
-# Haiku is the deliberate default: this task is "match a student's problem to a
-# known FAQ entry and decide resolve-or-escalate", which sits well inside its
-# range, at a fraction of the cost of a frontier model. Override to trade cost
-# for capability if evaluation shows it missing real cases.
-MODEL = os.environ.get("LLM_MODEL", "claude-haiku-4-5")
+# GPT-5 mini is the deliberate default, chosen after comparing OpenAI, Google and
+# Anthropic for this exact job -- "understand a student's message, decide
+# resolve-or-escalate, and call a ticket tool cleanly". It pairs strong, reliable
+# tool-calling (the make-or-break: a malformed call = a ticket never created) with
+# a low price, and -- unlike Claude Haiku -- its prompt caching activates at our
+# ~2,600-token knowledge-base size, so the KB resent on every turn is billed at a
+# steep discount. Provider is pluggable (LLM_PROVIDER / LLM_BASE_URL below);
+# switching model is an env-var change, not a rewrite.
+#
+# NB: confirm the exact id against your OpenAI dashboard's model list -- OpenAI
+# ships several variants (gpt-5-mini, gpt-5.4-mini, ...) at different prices.
+MODEL = os.environ.get("LLM_MODEL", "gpt-5-mini")
 
 # OpenAI-compatible backends only.
 BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
@@ -255,7 +262,12 @@ def _call_openai_compatible(messages, tools):
                  "Content-Type": "application/json"},
         json={
             "model": MODEL,
-            "max_tokens": MAX_TOKENS,
+            # GPT-5 and the o-series REJECT "max_tokens" and require
+            # "max_completion_tokens". (This was the field the code review flagged
+            # as "rejected by newer OpenAI models".) If you ever repoint
+            # LLM_BASE_URL at an older OpenAI-compatible host (Groq, Together,
+            # vLLM) that only understands "max_tokens", change this one key.
+            "max_completion_tokens": MAX_TOKENS,
             "messages": _to_openai_messages(messages),
             "tools": _to_openai_tools(tools),
         },

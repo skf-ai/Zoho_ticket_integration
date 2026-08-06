@@ -264,13 +264,29 @@ def _handle_zoho_webhook(event):
 
 
 def _zoho_webhook_authorized(event):
-    """Authenticate Zoho's workflow callback with a configured shared secret."""
+    """Authenticate Zoho's workflow callback with a configured shared secret.
+
+    Zoho Desk can deliver the secret one of two ways depending on how the
+    workflow action is built:
+      * a custom header `X-Webhook-Secret`  -- when using a Custom Function
+        (Deluge invokeurl), which supports arbitrary headers; or
+      * a query-string parameter `webhook_secret` -- the simplest thing to set
+        in the native webhook UI, which historically limits custom headers.
+    We accept either, so the Zoho side can use whichever its screen offers. The
+    secret is compared in constant time and never written to logs (the handler
+    does not dump the event).
+    """
     expected = config.get("zoho_webhook_secret")
     if not expected:
+        # Fail closed: an unconfigured secret means the endpoint is unprotected,
+        # and anyone who found the URL could push tickets toward closure.
         return False
     headers = {k.lower(): str(v) for k, v in (event.get("headers") or {}).items()}
-    provided = headers.get("x-webhook-secret", "")
-    return hmac.compare_digest(expected, provided)
+    provided = headers.get("x-webhook-secret")
+    if not provided:
+        qs = event.get("queryStringParameters") or {}
+        provided = qs.get("webhook_secret", "")
+    return hmac.compare_digest(expected, provided or "")
 
 
 def _resp(status, body):
