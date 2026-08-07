@@ -399,6 +399,13 @@ def cmd_resolve():
         STUDENT, "issue_resolved_check",
         components=[{"type": "body", "parameters": [{"type": "text", "text": tid}]}])
     STORE.await_verification(STUDENT, now, sla.verification_deadline(now))
+    # Mirror the real webhook: record the verification question in history so the
+    # agent understands the student's next reply is the answer (see handler.py).
+    STORE.append_history(STUDENT, [{
+        "role": "assistant",
+        "content": (f"Our support team has worked on your ticket #{tid}. "
+                    "Has your issue now been resolved? Please reply Yes or No."),
+    }])
 
 
 def cmd_tickets():

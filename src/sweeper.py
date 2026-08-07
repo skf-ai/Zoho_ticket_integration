@@ -32,7 +32,11 @@ from . import config, sla, state_store, whatsapp_client, workdays, zoho_client
 # WhatsApp number of the LMS administrator who receives nudges (E.164, no '+').
 ADMIN_WA_ID_KEY = "lms_admin_wa_id"
 
-BATCH_LIMIT = int(os.environ.get("SWEEP_BATCH_LIMIT", "200"))
+# How many due items one sweep processes. Each item can send a WhatsApp template
+# and touch Zoho, so a large batch risks exceeding the sweeper Lambda's 120s
+# timeout during a surge (e.g. an exam-day spike). Anything not reached this hour
+# is simply picked up next hour, so a smaller batch is safer than a bigger one.
+BATCH_LIMIT = int(os.environ.get("SWEEP_BATCH_LIMIT", "40"))
 
 TPL_ADMIN_NUDGE = "ticket_pending_admin"
 TPL_STUDENT_VERIFY = "issue_resolved_check"
@@ -110,6 +114,13 @@ def _perform(action, item, decision):
             state_store.record_student_reminder(
                 wa_id, decision.get("next_at") or workdays.now_utc()
             )
+            # Keep the agent aware that the student is being asked to verify, so a
+            # "no, still broken" reply reopens rather than confusing the agent.
+            state_store.append_history(wa_id, [{
+                "role": "assistant",
+                "content": (f"Following up on ticket #{ticket_id}: is your issue "
+                            "working now? Please reply Yes or No."),
+            }])
         else:
             # Same reasoning as the admin nudge: advance first so a retry cannot
             # double-send, then fail loudly. An undelivered reminder means the

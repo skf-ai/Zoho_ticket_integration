@@ -38,7 +38,7 @@ or the local fake clock for deadline-boundary testing.
 2. Check the `whatsapp-zoho-webhook` CloudWatch log group.
 3. Check Meta webhook delivery status and signature configuration.
 4. Verify the permanent WhatsApp token and `whatsapp_app_secret`.
-5. Check Anthropic balance/key. An AI outage should produce the fallback reply.
+5. Check the OpenAI balance/key (and spend limit). An AI outage should produce the fallback reply.
 6. Check DynamoDB for `msg#<message-id>`. Failed processing claims are released;
    completed claims remain for 24 hours.
 

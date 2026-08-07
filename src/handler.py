@@ -259,6 +259,16 @@ def _handle_zoho_webhook(event):
     state_store.await_verification(
         wa_id, prompted_at=now, auto_close_at=sla.verification_deadline(now)
     )
+    # Record the question in the conversation the agent reads. This template is
+    # sent outside the agent loop, so without this the agent never sees that the
+    # student was asked "is it fixed?" -- and a clear "no, still broken" reply
+    # gets treated as a fresh status query instead of a signal to REOPEN. With
+    # the question in history, the agent correctly calls confirm_resolution.
+    state_store.append_history(wa_id, [{
+        "role": "assistant",
+        "content": (f"Our support team has worked on your ticket #{ticket_id}. "
+                    "Has your issue now been resolved? Please reply Yes or No."),
+    }])
     print(f"[zoho-webhook] asked *{wa_id[-4:]} to confirm ticket {ticket_id}")
     return _resp(200, "prompt sent")
 

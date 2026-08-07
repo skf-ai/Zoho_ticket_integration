@@ -1,4 +1,13 @@
-# Roadmap — WhatsApp → Zoho Desk Support Bot
+> ⚠️ **HISTORICAL — SUPERSEDED. This file describes the ORIGINAL plan (a fixed
+> menu / FAQ button bot), which has since been replaced by an AI agent that reads
+> free text plus a deterministic accountability engine. It is kept only as a
+> record of the initial design. For how the system works TODAY, read
+> [PROJECT_STATUS.md](PROJECT_STATUS.md) and [README.md](README.md); the
+> "categories / menu" flow below no longer exists in the code.**
+
+---
+
+# Roadmap — WhatsApp → Zoho Desk Support Bot (original plan)
 
 A WhatsApp helper bot (Meta Cloud API) that answers common student FAQs, and
 escalates unresolved queries into Zoho Desk tickets. When support resolves the

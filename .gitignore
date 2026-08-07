@@ -32,6 +32,11 @@ ENV/
 # Configuration file with secrets
 config.json
 
+# Local environment file with real secrets -- never commit.
+# Use .env.example as the shareable template instead.
+.env
+.env.local
+
 # IDE / Editor specific
 .vscode/
 .idea/

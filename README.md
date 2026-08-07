@@ -1,15 +1,16 @@
 # WhatsApp LMS Support and Accountability Bot
 
 A low-cost support system for an educational non-profit. Students message a Meta
-WhatsApp number; a grounded Claude assistant answers from `knowledge/*.md` or
-creates a Zoho Desk ticket. A deterministic hourly worker reminds the LMS admin,
+WhatsApp number; a grounded AI assistant (OpenAI GPT-5 mini by default, and
+provider-swappable) answers from `knowledge/*.md` or creates a Zoho Desk ticket.
+A deterministic hourly worker reminds the LMS admin,
 asks the student to verify completed work, and applies the agreed three-working-
 day inactivity rules.
 
 ## Architecture
 
 - API Gateway + Lambda: authenticated Meta and Zoho webhooks
-- Claude Haiku: grounded conversation and tool selection
+- OpenAI GPT-5 mini (provider-swappable via `src/llm.py`): grounded conversation and tool selection
 - Zoho Desk: contacts, tickets, internal audit comments, closure
 - DynamoDB: conversation memory, lifecycle state, deduplication, due-action GSIs
 - EventBridge + Lambda: hourly SLA sweeper
@@ -34,7 +35,7 @@ python simulate.py --mock
 quality while keeping every external system fake:
 
 ```powershell
-$env:ANTHROPIC_API_KEY="temporary-local-key"
+$env:LLM_API_KEY="your-openai-api-key"
 python simulate.py
 ```
 

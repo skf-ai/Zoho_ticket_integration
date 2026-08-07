@@ -83,7 +83,10 @@ TOOLS = [
             "Record the student's answer after they have been asked whether their "
             "issue is now fixed. Call this ONLY when the student is explicitly "
             "responding to that question. Set resolved to true only when they "
-            "clearly confirm it is working."
+            "clearly confirm it is working. If they say it is NOT working, not "
+            "fixed, or still broken, call this with resolved set to false -- that "
+            "reopens the ticket and resumes chasing the admin. Do not just ask "
+            "again; record their answer."
         ),
         "input_schema": {
             "type": "object",
@@ -240,18 +243,22 @@ def _check_ticket_status(ctx):
 def _confirm_resolution(args, ctx):
     state = ctx["state"]
     ticket_id = state.get("ticket_id")
-
-    # Structural guard: this is the only path that can close a ticket, and it is
-    # only reachable when the admin has already marked the work done. No amount
-    # of persuasion in the student's message can bypass this.
-    if state.get("ticket_status") != "awaiting_verification":
-        return ("There is nothing awaiting confirmation for this student right "
-                "now, so this action was not performed. Continue helping with "
-                "their question normally.")
-
+    status = state.get("ticket_status")
     note = (args.get("note") or "").strip()[:500]
 
+    # This tool acts on the student's own LIVE ticket only. It never takes a
+    # ticket id (structural guard), so a student cannot reach anyone else's
+    # ticket, however they phrase it. It applies whether the ticket is
+    # `awaiting_verification` (they were asked to confirm) or still `open` (they
+    # solved it themselves before the admin got to it).
+    if status not in ("awaiting_verification", "open"):
+        return ("This student has no live ticket to update right now, so nothing "
+                "was changed. Continue helping with their question normally.")
+
     if args.get("resolved"):
+        # The student says their own issue is fixed -- close it. Closing an
+        # already-open ticket (self-resolved) is deliberate: it stops the admin
+        # being nudged for three days about a problem that no longer exists.
         ok = zoho_client.close_ticket(
             ticket_id,
             comment=f"Student confirmed resolved via WhatsApp. {note}".strip(),
@@ -263,15 +270,21 @@ def _confirm_resolution(args, ctx):
         return (f"Ticket #{ticket_id} closed. Thank the student warmly and let them "
                 f"know they can message again any time.")
 
-    # Not fixed: reopen, tell the admin, restart the clock.
-    zoho_client.add_comment(
-        ticket_id,
-        f"Student says the issue is NOT resolved. {note}".strip(),
-    )
-    state_store.reopen_ticket(ctx["wa_id"], workdays.now_utc())
-    return (f"Ticket #{ticket_id} reopened and the administrator has been told it "
-            f"is still not working. Tell the student it has gone back to the team, "
-            f"and ask for any extra detail that might help.")
+    # The student says it is NOT fixed.
+    if status == "awaiting_verification":
+        # They were asked to verify and said no -> reopen and chase the admin.
+        zoho_client.add_comment(
+            ticket_id, f"Student says the issue is NOT resolved. {note}".strip())
+        state_store.reopen_ticket(ctx["wa_id"], workdays.now_utc())
+        return (f"Ticket #{ticket_id} reopened and the administrator has been told "
+                f"it is still not working. Tell the student it has gone back to the "
+                f"team, and ask for any extra detail that might help.")
+
+    # Already open and still not fixed -> nothing to change; just record detail.
+    if note:
+        zoho_client.add_comment(ticket_id, f"Student added detail: {note}")
+    return (f"Ticket #{ticket_id} is already open with the team and being chased. "
+            f"Reassure the student it is in progress; do not say it is closed.")
 
 
 def _friendly(iso_ts):

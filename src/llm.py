@@ -55,6 +55,15 @@ BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
 
 MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "1024"))
 
+# GPT-5 / o-series are *reasoning* models: by default they "think" before
+# answering, which can take 15-30s -- far too slow for a synchronous WhatsApp
+# webhook bound by API Gateway's 29s ceiling (a real ReadTimeout was observed in
+# testing). This job -- match a student message to an FAQ and call at most one
+# tool -- does not need deep reasoning, so we cap the effort low for speed while
+# keeping enough for correct tool calls. Set to "minimal" for maximum speed, or
+# clear it (empty) for non-reasoning / non-OpenAI backends that reject the field.
+REASONING_EFFORT = os.environ.get("LLM_REASONING_EFFORT", "low")
+
 # Hard ceiling on a single reply. WhatsApp messages are short, and a runaway
 # generation is both a bad user experience and a cost incident.
 #
@@ -256,21 +265,28 @@ def _call_openai_compatible(messages, tools):
     if not api_key:
         raise LLMError(f"No API key found for provider (looked for '{key_name}')")
 
+    payload = {
+        "model": MODEL,
+        # GPT-5 and the o-series REJECT "max_tokens" and require
+        # "max_completion_tokens". (This was the field the code review flagged
+        # as "rejected by newer OpenAI models".) If you ever repoint
+        # LLM_BASE_URL at an older OpenAI-compatible host (Groq, Together,
+        # vLLM) that only understands "max_tokens", change this one key.
+        "max_completion_tokens": MAX_TOKENS,
+        "messages": _to_openai_messages(messages),
+        "tools": _to_openai_tools(tools),
+    }
+    # Keep the reasoning model fast enough for a synchronous webhook (see the
+    # REASONING_EFFORT note above). Omitted when cleared, for backends that
+    # don't accept the field.
+    if REASONING_EFFORT:
+        payload["reasoning_effort"] = REASONING_EFFORT
+
     resp = requests.post(
         f"{BASE_URL}/chat/completions",
         headers={"Authorization": f"Bearer {api_key}",
                  "Content-Type": "application/json"},
-        json={
-            "model": MODEL,
-            # GPT-5 and the o-series REJECT "max_tokens" and require
-            # "max_completion_tokens". (This was the field the code review flagged
-            # as "rejected by newer OpenAI models".) If you ever repoint
-            # LLM_BASE_URL at an older OpenAI-compatible host (Groq, Together,
-            # vLLM) that only understands "max_tokens", change this one key.
-            "max_completion_tokens": MAX_TOKENS,
-            "messages": _to_openai_messages(messages),
-            "tools": _to_openai_tools(tools),
-        },
+        json=payload,
         timeout=_TIMEOUT_SECONDS,
     )
     if resp.status_code != 200:
