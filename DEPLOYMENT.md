@@ -7,6 +7,10 @@ There are two pipelines:
 - **CI** (`.github/workflows/ci.yml`) — runs tests on every push/PR. Automatic.
 - **Deploy** (`.github/workflows/deploy.yml`) — builds + deploys to AWS. Manual trigger.
 
+Before the first deploy, complete the Meta/WhatsApp account work in
+[deployment/meta-whatsapp-setup.md](deployment/meta-whatsapp-setup.md) —
+the deploy is step 8 of that checklist.
+
 ---
 
 ## One-time setup (do this once)

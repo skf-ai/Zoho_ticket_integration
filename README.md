@@ -66,5 +66,7 @@ Never commit this JSON. Replace `<LMS_URL>` and `<SUPPORT_EMAIL>` in every
 knowledge file before deployment. `/health` returns HTTP 503 until required
 configuration and knowledge content are ready.
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for deployment and [RUNBOOK.md](RUNBOOK.md)
-for live testing, incidents and rollback.
+See [deployment/meta-whatsapp-setup.md](deployment/meta-whatsapp-setup.md) for
+the ordered Meta/WABA go-live checklist (phone number, tokens, templates,
+billing), [DEPLOYMENT.md](DEPLOYMENT.md) for deployment and
+[RUNBOOK.md](RUNBOOK.md) for live testing, incidents and rollback.

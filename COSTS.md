@@ -181,7 +181,7 @@ region ap-south-1. Nothing is stored in the code or in GitHub.
 | `zoho_department_id` | 146318000000010772 | Stable |
 | `zoho_webhook_secret` | Shared secret the Zoho resolved-ticket workflow sends back to prove the callback is genuinely from Zoho | ⚠️ **Not yet added — invent any long random string, put the same value in the Zoho workflow** |
 | `whatsapp_token` | Meta access token | ⚠️ **Currently temporary — expires in ~24h** |
-| `whatsapp_phone_number_id` | 1121518577721735 | ⚠️ Currently Meta's **test** number |
+| `whatsapp_phone_number_id` | 1121518577721735 | ⚠️ Currently Meta's **test** number — being replaced by the real support number `8925993784` (see `deployment/meta-whatsapp-setup.md`) |
 | `whatsapp_waba_id` | 991209477079437 | Stable |
 | `whatsapp_verify_token` | stored in Secrets Manager; rotate if previously exposed | Chosen by us |
 | `whatsapp_app_secret` | Verifies messages truly come from Meta | ⚠️ **Currently empty** |
@@ -196,8 +196,9 @@ region ap-south-1. Nothing is stored in the code or in GitHub.
 2. **`whatsapp_app_secret` is empty.** Without it, anyone who discovers the web
    address can send fake student messages and make the system create tickets. Fill
    it in from the Meta app dashboard.
-3. **The phone number is Meta's test number.** Real students cannot use it. Add
-   and verify the real business number.
+3. **The phone number is Meta's test number.** Real students cannot use it. The
+   real support number `8925993784` is being onboarded — full steps in
+   `deployment/meta-whatsapp-setup.md`.
 
 ---
 
