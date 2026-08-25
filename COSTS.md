@@ -4,7 +4,7 @@
 and what breaks if one of them lapses. Written so that someone who has never seen
 this project can pick it up and keep it running.
 
-**Last updated:** 2026-07-23
+**Last updated:** 2026-08-24
 
 > If you are taking this project over: read this file, then [README.md](README.md)
 > for what the system does, then [PROJECT_STATUS.md](PROJECT_STATUS.md) for where
@@ -179,26 +179,29 @@ region ap-south-1. Nothing is stored in the code or in GitHub.
 | `zoho_refresh_token` | Long-lived Zoho login | Breaks if revoked in Zoho console |
 | `zoho_org_id` | 60037340249 | Stable |
 | `zoho_department_id` | 146318000000010772 | Stable |
-| `zoho_webhook_secret` | Shared secret the Zoho resolved-ticket workflow sends back to prove the callback is genuinely from Zoho | ⚠️ **Not yet added — invent any long random string, put the same value in the Zoho workflow** |
-| `whatsapp_token` | Meta access token | ⚠️ **Currently temporary — expires in ~24h** |
-| `whatsapp_phone_number_id` | 1121518577721735 | ⚠️ Currently Meta's **test** number — being replaced by the real support number `8925993784` (see `deployment/meta-whatsapp-setup.md`) |
+| `zoho_webhook_secret` | Shared secret the Zoho resolved-ticket workflow sends back to prove the callback is genuinely from Zoho | Added 2026-08-21. ⚠️ The same value must go into the Zoho workflow when it is configured |
+| `whatsapp_token` | Meta access token | **Permanent** (generated 2026-08-20 via Meta's guided setup; rotated once after a screenshot exposure). Stable |
+| `whatsapp_phone_number_id` | 1181089108432432 | The real support number **+91 89259 93784** — Connected, quality High |
 | `whatsapp_waba_id` | 991209477079437 | Stable |
-| `whatsapp_verify_token` | stored in Secrets Manager; rotate if previously exposed | Chosen by us |
-| `whatsapp_app_secret` | Verifies messages truly come from Meta | ⚠️ **Currently empty** |
-| `llm_api_key` | OpenAI API key (for GPT-5 mini) | ⚠️ **Not yet added** |
-| `lms_admin_wa_id` | Admin's WhatsApp number for nudges | Not yet added |
+| `whatsapp_verify_token` | Proves webhook-verification calls come from us | Rotated 2026-08-21 (old value had appeared in tracked docs). ⚠️ Meta's webhook config still holds the old value — update it when repointing the webhook after deployment |
+| `whatsapp_app_secret` | Verifies messages truly come from Meta | Added 2026-08-21 |
+| `llm_api_key` | OpenAI API key (for GPT-5 mini) | Added 2026-08-21. Set a spend limit at platform.openai.com |
+| `lms_admin_wa_id` | Admin's WhatsApp number for nudges | Added 2026-08-21 |
 
-### The three that need fixing before go-live
+### Credential status (2026-08-24)
 
-1. **`whatsapp_token` is temporary.** It expires roughly daily. Replace it with a
-   permanent **System User token** from Meta Business Settings. Until then the
-   system stops sending messages every day without warning.
-2. **`whatsapp_app_secret` is empty.** Without it, anyone who discovers the web
-   address can send fake student messages and make the system create tickets. Fill
-   it in from the Meta app dashboard.
-3. **The phone number is Meta's test number.** Real students cannot use it. The
-   real support number `8925993784` is being onboarded — full steps in
-   `deployment/meta-whatsapp-setup.md`.
+The three go-live blockers from the previous version of this file are **all
+fixed**: the token is permanent, the app secret is set, and the real support
+number +91 89259 93784 is registered and Connected with all four message
+templates approved. What still stands between here and go-live is **not**
+credentials:
+
+1. **WABA payment method** (finance approval) — template messages fail silently
+   without it.
+2. **Deployment** — run the GitHub Deploy workflow, then repoint Meta's webhook
+   at the new URL with the rotated verify token.
+3. **Meta business verification** (org documents) — raises the 250/day
+   business-initiated conversation cap before wide circulation.
 
 ---
 
@@ -265,7 +268,7 @@ original team is gone.
 | AWS account 417311687123 | | |
 | Meta Business / WhatsApp | | |
 | Zoho Desk | | |
-| Anthropic API | | |
+| OpenAI API | | |
 | GitHub repo | skf-ai/Zoho_ticket_integration | |
 | LMS admin (receives nudges) | | |
 
@@ -275,7 +278,7 @@ original team is gone.
 
 Five minutes, once a month:
 
-- [ ] Check Anthropic usage is in the expected range
+- [ ] Check OpenAI usage is in the expected range
 - [ ] Check the AWS bill has no surprises
 - [ ] Check the Meta WhatsApp account still has a valid payment method
 - [ ] Check tickets are actually being closed, not just piling up

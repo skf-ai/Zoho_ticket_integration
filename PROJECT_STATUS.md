@@ -1,26 +1,53 @@
 # Project Status and Handoff
 
-**Updated:** 2026-08-19
+**Updated:** 2026-08-24
 
 ## Current stage
 
-**Code complete and locally verified (59 tests passing); not yet deployed or
-tested against live Meta, Zoho, DynamoDB or OpenAI services.** The remaining
-work is entirely account setup and deployment, not programming.
+**Code complete and locally verified (59 tests passing). Meta/WhatsApp setup is
+DONE: the real support number is live on the Cloud API and all four message
+templates are approved.** The system is not yet deployed to AWS; deployment is
+the next milestone.
 
-The active workstream is onboarding the real support number to the WhatsApp
-Business Platform. The office business number was removed from the WABA; the
-spare number **8925993784** (now on a new phone/SIM) will be onboarded for
-testing and — once the controlled live test passes — circulated to students as
-the production support number. The system is still configured with Meta's
-**test** phone number until then.
+What remains before students can use it, in order:
 
-**Next actions, in order:** follow
-[`deployment/meta-whatsapp-setup.md`](deployment/meta-whatsapp-setup.md)
-top to bottom. It covers freeing the number from the consumer WhatsApp app,
-adding it to WABA `991209477079437`, the permanent System User token, app
-secret, billing, template submission, Secrets Manager, first deployment,
-webhook wiring, the controlled live test, and the go-live checklist.
+1. **Deploy role + GitHub secret** — confirm/create the IAM role
+   `github-deploy-whatsapp-zoho` trusting `repo:skf-ai/Zoho_ticket_integration`
+   (the GitHub OIDC identity provider already exists in account 417311687123
+   from another project) and store its ARN as the `AWS_DEPLOY_ROLE_ARN`
+   repository secret.
+2. **Run the Deploy workflow** (GitHub Actions) and confirm `/health` returns
+   `"ready": true`.
+3. **Repoint Meta's webhook** to the new `ApiBaseUrl` with the rotated verify
+   token, and subscribe the `messages` field.
+4. **Configure the Zoho Desk Resolved workflow** with `X-Webhook-Secret`.
+5. **WABA payment method** — awaiting finance approval (template sends fail
+   silently without it; ~₹100–200/month expected).
+6. **Controlled live test** per `RUNBOOK.md`.
+7. **Meta business verification** (org documents) — raises the messaging limit
+   from 250 business-initiated conversations/day; required before circulating
+   the number widely.
+8. **Circulate +91 89259 93784 to students** as the official support number.
+
+## Meta / WhatsApp — completed 2026-08-20/21
+
+- Old office number removed from the WABA (was Unverified; nothing lost).
+- Support number **+91 89259 93784** added to WABA `991209477079437`,
+  OTP-verified, **registered on the Cloud API** — status **Connected**,
+  quality **High**. Phone Number ID `1181089108432432`.
+- Two-way messaging verified from the API Setup test page (inbound + template).
+- Permanent access token generated (rotated once after a screenshot exposure)
+  and stored in Secrets Manager.
+- All four Utility templates **approved** in plain English (`en`), names
+  matching the code exactly: `ticket_pending_admin`, `issue_resolved_check`,
+  `ticket_reminder_student`, `ticket_auto_closed`.
+- Secrets Manager `siddhanta/whatsapp-zoho` fully populated, including
+  `whatsapp_app_secret`, rotated `whatsapp_verify_token`,
+  `zoho_webhook_secret`, `llm_api_key`, and `lms_admin_wa_id`.
+- Knowledge files verified free of `<LMS_URL>`/`<SUPPORT_EMAIL>` placeholders.
+
+The full click-by-click record is
+[`deployment/meta-whatsapp-setup.md`](deployment/meta-whatsapp-setup.md).
 
 ## Implemented
 
@@ -54,40 +81,23 @@ AWS SAM CLI is not installed on the current workstation, so final SAM transform
 validation is delegated to the GitHub Deploy workflow (`sam validate` and
 `sam build`) before CloudFormation can change infrastructure.
 
-## Required from the project owner before deployment
-
-Everything below is walked through step by step in
-[`deployment/meta-whatsapp-setup.md`](deployment/meta-whatsapp-setup.md).
-
-1. Onboard `8925993784` to the WABA (delete its consumer WhatsApp account
-   first) and put its new Phone Number ID in Secrets Manager.
-2. Replace the temporary WhatsApp token with a permanent System User token.
-3. Fill `whatsapp_app_secret`; rotate `whatsapp_verify_token` because an
-   earlier value appeared in tracked documentation and must be considered
-   exposed.
-4. Add billing to the WABA and submit/approve all four Meta WhatsApp templates.
-5. Replace `<LMS_URL>` and `<SUPPORT_EMAIL>` in every knowledge file.
-6. Add the OpenAI key (`llm_api_key`) and confirm the LMS administrator
-   WhatsApp number (`lms_admin_wa_id`) in Secrets Manager.
-7. Configure Zoho's Resolved workflow with `X-Webhook-Secret`.
-8. Confirm the GitHub OIDC deployment role is scoped and not AdministratorAccess.
-9. Run the manual deployment, confirm the SNS email subscription, then execute
-   the controlled live test in `RUNBOOK.md`.
-10. Only after the live test passes: complete Meta business verification and
-    circulate `8925993784` to students.
-
 ## History
 
 - 2026-07-23 — production-hardening implementation verified locally (40 tests).
-- Later hardening: stuck-state recovery, timeout budget, silent-nudge fixes;
-  default model switched to GPT-5 mini with Zoho dual-auth; reasoning cap,
-  verification-in-history reopen fix, student self-close (59 tests).
-- 2026-08-19 — office business number removed from the WABA; decision to
-  onboard spare number `8925993784` for testing and production; Meta go-live
-  guide added.
+- Hardening continued: stuck-state recovery, timeout budget, silent-nudge
+  fixes; default model switched to GPT-5 mini with Zoho dual-auth; reasoning
+  cap, verification-in-history reopen fix, student self-close (59 tests).
+- 2026-08-19 — office number removed from the WABA; decision to onboard spare
+  number 8925993784; Meta go-live guide added.
+- 2026-08-20 — number added, registered, Connected; permanent token stored;
+  Phone Number ID in Secrets Manager; two-way test messages verified.
+- 2026-08-21 — all four templates submitted; Secrets Manager completed.
+- 2026-08-24 — templates confirmed approved. Remaining: deploy pipeline,
+  deployment, WABA payment, Zoho workflow, live test, business verification.
 
 ## Deliberately not done
 
 - No credentials were requested in chat, printed, or committed.
-- No live AWS, Meta, Zoho or OpenAI calls were made.
-- No deployment was performed.
+- No deployment has been performed yet.
+- WABA payment method and Meta business verification are pending on the
+  organisation (finance approval and registration documents respectively).

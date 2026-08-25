@@ -1,7 +1,7 @@
 # WhatsApp LMS Support and Accountability Bot
 
-A low-cost support system for an educational non-profit. Students message a Meta
-WhatsApp number; a grounded AI assistant (OpenAI GPT-5 mini by default, and
+A low-cost support system for an educational non-profit. Students message the
+support WhatsApp number (+91 89259 93784); a grounded AI assistant (OpenAI GPT-5 mini by default, and
 provider-swappable) answers from `knowledge/*.md` or creates a Zoho Desk ticket.
 A deterministic hourly worker reminds the LMS admin,
 asks the student to verify completed work, and applies the agreed three-working-
@@ -66,7 +66,9 @@ Never commit this JSON. Replace `<LMS_URL>` and `<SUPPORT_EMAIL>` in every
 knowledge file before deployment. `/health` returns HTTP 503 until required
 configuration and knowledge content are ready.
 
-See [deployment/meta-whatsapp-setup.md](deployment/meta-whatsapp-setup.md) for
-the ordered Meta/WABA go-live checklist (phone number, tokens, templates,
-billing), [DEPLOYMENT.md](DEPLOYMENT.md) for deployment and
-[RUNBOOK.md](RUNBOOK.md) for live testing, incidents and rollback.
+See [PROJECT_STATUS.md](PROJECT_STATUS.md) for where the build currently
+stands, [deployment/meta-whatsapp-setup.md](deployment/meta-whatsapp-setup.md)
+for the ordered Meta/WABA go-live checklist (phone number, tokens, templates,
+billing), [DEPLOYMENT.md](DEPLOYMENT.md) for deployment,
+[RUNBOOK.md](RUNBOOK.md) for live testing, incidents and rollback, and
+[COSTS.md](COSTS.md) for every cost and credential.

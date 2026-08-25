@@ -1,6 +1,22 @@
 # Meta / WhatsApp Business Platform setup — go-live guide
 
-**Updated:** 2026-08-19
+**Updated:** 2026-08-24
+
+## Progress record
+
+| Step | Status |
+|---|---|
+| 0 — Free the number from the consumer app | ✅ 2026-08-19 |
+| 1 — Add number to WABA (OTP verified, then registered via guided setup; Phone Number ID `1181089108432432`) | ✅ 2026-08-20 — **Connected**, quality High |
+| 2 — Phone Number ID in Secrets Manager | ✅ 2026-08-20 |
+| 3 — Permanent token (via Meta guided setup "Generate token"; no manual System User needed) | ✅ 2026-08-20 (rotated once after a screenshot exposure) |
+| 4 — App secret + fresh verify token | ✅ 2026-08-21 (⚠️ Meta webhook config still holds the old verify token until the post-deploy repoint) |
+| 5 — Billing on the WABA | ⏳ awaiting finance approval |
+| 6 — Four templates submitted | ✅ approved 2026-08-21/24, plain English (`en`) |
+| 7 — Remaining secret keys | ✅ 2026-08-21 |
+| 8 — Deploy + wire webhook | ⏳ next milestone (OIDC provider exists; ticketing deploy role + `AWS_DEPLOY_ROLE_ARN` GitHub secret to confirm) |
+| 9 — Controlled live test | ⏳ after deploy + billing |
+| 10 — Business verification + circulate number | ⏳ awaiting org documents |
 
 This is the complete, ordered checklist to take the system from "code done" to
 live on the real support number. Work top to bottom; each step tells you where
