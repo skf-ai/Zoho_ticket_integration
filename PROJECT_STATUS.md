@@ -1,33 +1,36 @@
 # Project Status and Handoff
 
-**Updated:** 2026-08-24
+**Updated:** 2026-08-25
 
 ## Current stage
 
-**Code complete and locally verified (59 tests passing). Meta/WhatsApp setup is
-DONE: the real support number is live on the Cloud API and all four message
-templates are approved.** The system is not yet deployed to AWS; deployment is
-the next milestone.
+**DEPLOYED AND LIVE.** The stack deployed successfully via the GitHub Deploy
+workflow on 2026-08-25 (stack `whatsapp-zoho-bot`, ap-south-1; same
+`ApiBaseUrl` as the earlier deployment, so Meta's webhook needed no URL
+change). `/health` returns `"ready": true` with all checks green. After
+enabling the WABA-level **Subscribe webhooks** toggle in Meta's Production
+setup (the missing link — app-level `messages` subscription alone is not
+enough), the bot now answers real WhatsApp messages on **+91 89259 93784**
+from the knowledge base, live-verified end to end.
 
-What remains before students can use it, in order:
+Alert email `AlertEmail` was set during deploy; the SNS subscription
+confirmation email must be accepted for alarms to deliver.
 
-1. **Deploy role + GitHub secret** — confirm/create the IAM role
-   `github-deploy-whatsapp-zoho` trusting `repo:skf-ai/Zoho_ticket_integration`
-   (the GitHub OIDC identity provider already exists in account 417311687123
-   from another project) and store its ARN as the `AWS_DEPLOY_ROLE_ARN`
-   repository secret.
-2. **Run the Deploy workflow** (GitHub Actions) and confirm `/health` returns
-   `"ready": true`.
-3. **Repoint Meta's webhook** to the new `ApiBaseUrl` with the rotated verify
-   token, and subscribe the `messages` field.
-4. **Configure the Zoho Desk Resolved workflow** with `X-Webhook-Secret`.
-5. **WABA payment method** — awaiting finance approval (template sends fail
+What remains before wide circulation, in order:
+
+1. **Confirm the rotated verify token is saved in Meta's webhook config**
+   (Verify and save with the new `whatsapp_verify_token` value).
+2. **Configure the Zoho Desk Resolved workflow** with `X-Webhook-Secret`
+   posting to the stack's `ZohoWebhookUrl`.
+3. **WABA payment method** — awaiting finance approval (template sends fail
    silently without it; ~₹100–200/month expected).
-6. **Controlled live test** per `RUNBOOK.md`.
-7. **Meta business verification** (org documents) — raises the messaging limit
+4. **Controlled live test** per `RUNBOOK.md` (needs payment for the
+   reminder/verification templates).
+5. **Meta business verification** (org documents) — raises the messaging limit
    from 250 business-initiated conversations/day; required before circulating
    the number widely.
-8. **Circulate +91 89259 93784 to students** as the official support number.
+6. **Circulate +91 89259 93784 to students in batches** as the official
+   support number.
 
 ## Meta / WhatsApp — completed 2026-08-20/21
 

@@ -22,6 +22,8 @@ an exception inside a tool would abort the webhook and lose the student's
 message.
 """
 
+import re
+
 from . import state_store, workdays, zoho_client
 
 SLA_WORKING_DAYS = 3
@@ -124,7 +126,14 @@ def dispatch(name, tool_input, ctx):
         return f"Unknown tool '{name}'. Do not try to call it again."
     except Exception as e:  # noqa: BLE001 - a tool failure must not kill the turn
         wa_id = str(ctx.get("wa_id") or "")
-        print(f"[tools] {name} failed for *{wa_id[-4:]}: {type(e).__name__}")
+        # Include the upstream response so the operator can see WHY (e.g. the
+        # Zoho error body), masking any long digit run (phone numbers, ids).
+        detail = str(e)
+        body = getattr(getattr(e, "response", None), "text", "")
+        if body:
+            detail += f" | body: {body[:300]}"
+        detail = re.sub(r"\d{7,}", "***", detail)
+        print(f"[tools] {name} failed for *{wa_id[-4:]}: {type(e).__name__}: {detail}")
         return ("That action failed because of a system error. Apologise to the "
                 "student, tell them the team has been notified, and do not retry "
                 "the same action.")
