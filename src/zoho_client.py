@@ -3,6 +3,7 @@
 Credentials come from src/config.py (Secrets Manager in AWS, env vars locally).
 """
 
+import html
 import requests
 import time
 
@@ -97,9 +98,12 @@ def create_ticket(subject, description, contact_id, category=None):
         print("Could not create ticket: access token missing.")
         return None
 
+    # Zoho renders the description as HTML, where plain "\n" collapses into one
+    # paragraph. Escape the text, then make line breaks real so the agent's
+    # labelled lines stay readable for the admin.
     data = {
         "subject": subject,
-        "description": description,
+        "description": html.escape(description).replace("\n", "<br>"),
         "contactId": contact_id,
         "departmentId": config.require("zoho_department_id"),
     }

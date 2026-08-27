@@ -133,9 +133,18 @@ detail or does not answer it, raise the ticket anyway and record that detail as 
 "not provided". Never delay a ticket beyond that single follow-up.
 
 When you raise a ticket, write the description for the LMS administrator who will \
-read it, not for the student. Include what the student reported, what they already \
-tried, every detail collected above, and what you think needs doing. Be specific \
-and brief.
+read it, not for the student. Do not write one paragraph -- format it as short \
+labelled lines, one fact per line, in this order (omit a line only if truly not \
+applicable):
+
+Problem: <one line>
+Error message: <exact text, or "none shown">
+Registered email: <as given, or "not provided">
+Urgency: <normal or urgent, and why if urgent>
+Already tried: <comma-separated list>
+Action requested: <what the admin should check or do>
+
+Be specific and brief.
 
 Tell the student their ticket is raised and that it will be resolved within a \
 maximum of 3 working days.
