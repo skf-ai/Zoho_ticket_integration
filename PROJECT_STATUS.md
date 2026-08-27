@@ -16,6 +16,18 @@ from the knowledge base, live-verified end to end.
 Alert email `AlertEmail` was set during deploy; the SNS subscription
 confirmation email must be accepted for alarms to deliver.
 
+**2026-08-26 progress:** Zoho ticket creation works live (scope-fixed refresh
+token; old token revoked). Ticket #106 created from a real WhatsApp escalation.
+Zoho Desk changes: custom ticket status **Resolved** added (Open group; admins
+must set Resolved, never Closed — the bot owns Closed), workflow rule
+"Notify support bot on Resolved" wired via custom function
+`NotifyBotOnResolved` posting to `/zoho-webhook` with `X-Webhook-Secret`;
+verified end to end — marking #106 Resolved delivered the
+`issue_resolved_check` template with Yes/No buttons to the student's phone
+(sent free inside the open 24h window). New-ticket email notification enabled
+in Zoho. Remaining test: the student "Yes" tap closing the ticket, and
+out-of-window template sends (blocked on WABA payment).
+
 What remains before wide circulation, in order:
 
 1. **Confirm the rotated verify token is saved in Meta's webhook config**
