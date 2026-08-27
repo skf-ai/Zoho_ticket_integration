@@ -2,9 +2,11 @@ name: Deploy
 
 # Deploys the bot to AWS with SAM.
 #
-# Trigger it MANUALLY from GitHub: Actions tab -> "Deploy" -> "Run workflow".
-# (It can also auto-deploy on push to main — that block is commented out below,
-#  enable it once you're comfortable.)
+# Runs automatically on every push to main (tests gate the deploy), and can
+# still be triggered manually: Actions tab -> "Deploy" -> "Run workflow".
+# Auto-deploys read the ops alarm email from the ALERT_EMAIL repo variable
+# (Settings -> Secrets and variables -> Actions -> Variables) — keep it set,
+# or auto-deploys ship without monitoring.
 #
 # Authentication uses GitHub OIDC (no long-lived AWS keys stored in GitHub).
 # One-time setup is documented in DEPLOYMENT.md.
@@ -16,8 +18,12 @@ on:
         description: "Ops email for alarms. Leave blank ONLY if you have set the ALERT_EMAIL repo variable, or you accept deploying with NO monitoring."
         required: false
         default: ""
-  # push:
-  #   branches: ["main"]     # uncomment to auto-deploy on merge to main
+  push:
+    branches: ["main"]       # auto-deploy on push to main
+
+concurrency:
+  group: deploy-production   # never run two deploys at once; queue instead
+  cancel-in-progress: false
 
 permissions:
   id-token: write            # required for OIDC
