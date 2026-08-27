@@ -284,6 +284,13 @@ def _confirm_resolution(args, ctx):
         # They were asked to verify and said no -> reopen and chase the admin.
         zoho_client.add_comment(
             ticket_id, f"Student says the issue is NOT resolved. {note}".strip())
+        try:
+            # Flip the visible Zoho status back so the admin sees it needs work;
+            # the internal reopen below must proceed even if this call fails.
+            zoho_client.reopen_ticket(ticket_id)
+        except Exception as e:  # noqa: BLE001
+            print(f"[tools] could not set ticket {ticket_id} back to Open: "
+                  f"{type(e).__name__}")
         state_store.reopen_ticket(ctx["wa_id"], workdays.now_utc())
         return (f"Ticket #{ticket_id} reopened and the administrator has been told "
                 f"it is still not working. Tell the student it has gone back to the "

@@ -149,6 +149,28 @@ def close_ticket(ticket_id, comment=None):
     return True
 
 
+def reopen_ticket(ticket_id):
+    """Set a ticket's status back to Open (student said it is still broken).
+
+    Without this the ticket keeps showing the admin's "Resolved" status in the
+    Zoho UI even though the system has reopened it internally.
+    """
+    access_token = get_access_token()
+    if not access_token:
+        return False
+    resp = requests.patch(
+        f"{config.ZOHO_API_BASE}/tickets/{ticket_id}",
+        headers=_headers(access_token),
+        json={"status": "Open"},
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        print(f"Error reopening ticket {ticket_id} ({resp.status_code}): {resp.text}")
+        return False
+    print(f"Ticket {ticket_id} set back to Open.")
+    return True
+
+
 def add_comment(ticket_id, content, access_token=None):
     """Add a comment to a ticket (used when the user says 'not resolved')."""
     access_token = access_token or get_access_token()
