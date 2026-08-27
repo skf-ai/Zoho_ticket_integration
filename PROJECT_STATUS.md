@@ -16,6 +16,16 @@ from the knowledge base, live-verified end to end.
 Alert email `AlertEmail` was set during deploy; the SNS subscription
 confirmation email must be accepted for alarms to deliver.
 
+**2026-08-27 progress:** full ticket lifecycle verified on the live number —
+escalation with pre-ticket intake (registered email, error text, urgency),
+urgent ticket #107 created and closed via the student's "Yes" tap. Agent now
+formats ticket descriptions as labelled lines and Zoho renders real line
+breaks; a student "No" now visibly returns the ticket to Open in Zoho (plus
+internal comment). Auto-deploy on push to `main` enabled with a concurrency
+guard and a hardened empty-AlertEmail path; `ALERT_EMAIL` repo variable
+carries the ops email for automatic runs. Runbook now documents the Zoho
+admin rules (set Resolved, never Closed).
+
 **2026-08-26 progress:** Zoho ticket creation works live (scope-fixed refresh
 token; old token revoked). Ticket #106 created from a real WhatsApp escalation.
 Zoho Desk changes: custom ticket status **Resolved** added (Open group; admins

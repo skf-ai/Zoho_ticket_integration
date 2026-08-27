@@ -1,5 +1,29 @@
 # Operations Runbook
 
+## Zoho Desk operating rules (for whoever handles tickets)
+
+1. **When you have fixed an issue, set the ticket to `Resolved` — never
+   `Closed`.** Resolved triggers the WhatsApp "is your issue fixed?" prompt to
+   the student; only the system sets Closed, after the student confirms. The
+   custom `Resolved` status lives in the Open group so unconfirmed tickets
+   still count as open work.
+2. If the student answers **No**, the ticket status returns to `Open`
+   automatically with an internal comment, and the 3-working-day clock
+   restarts. Do not close it manually.
+3. The Resolved trigger is the workflow rule **"Notify support bot on
+   Resolved"** (custom function `NotifyBotOnResolved`, header
+   `X-Webhook-Secret` = `zoho_webhook_secret`). If verification prompts stop
+   arriving, check that this rule is still enabled and the secret matches.
+4. New-ticket email notifications are enabled under Setup → Notification
+   Rules (department: new ticket creation).
+
+## Deployment model
+
+Every push to `main` deploys automatically (tests gate it; concurrent deploys
+queue). The manual Actions → Deploy button still works for redeploys without a
+commit. Auto-deploys read the alarm email from the `ALERT_EMAIL` repository
+variable — keep it set. Do not push to `main` right before a demo.
+
 ## Pre-deployment gate
 
 1. `python -m pytest -q` passes.
