@@ -69,8 +69,13 @@ jobs:
           # Settings -> Secrets and variables -> Actions -> Variables (ALERT_EMAIL).
           ALERT="${{ github.event.inputs.alert_email }}"
           if [ -z "$ALERT" ]; then ALERT="${{ vars.ALERT_EMAIL }}"; fi
+          # An empty --parameter-overrides value is a SAM syntax error, so the
+          # override is included only when an email actually exists.
+          OVERRIDES=()
           if [ -z "$ALERT" ]; then
             echo "::warning::Deploying with NO monitoring — no alert_email input and no ALERT_EMAIL variable. A silent outage will look identical to a healthy system. Set one and redeploy."
+          else
+            OVERRIDES=(--parameter-overrides AlertEmail="$ALERT")
           fi
           sam deploy \
             --stack-name whatsapp-zoho-bot \
@@ -79,4 +84,4 @@ jobs:
             --resolve-s3 \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
-            --parameter-overrides AlertEmail="$ALERT"
+            "${OVERRIDES[@]}"
