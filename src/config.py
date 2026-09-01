@@ -48,6 +48,14 @@ _SECRET_KEYS = (
     "zoho_webhook_secret",
     "llm_api_key",
     "lms_admin_wa_id",
+    # Optional: enables GET /admin when set; the dashboard stays 404 without it.
+    "admin_dashboard_key",
+    # Optional: live billing on the admin dashboard. The WABA id lets us read
+    # Meta's real conversation charges; the OpenAI ADMIN key (org-level, not a
+    # project key) unlocks the real OpenAI bill. Missing keys degrade to
+    # clearly-badged estimates.
+    "whatsapp_waba_id",
+    "openai_admin_key",
 )
 
 

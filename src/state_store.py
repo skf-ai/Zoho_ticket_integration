@@ -82,6 +82,27 @@ def find_by_ticket(ticket_id):
     return items[0] if items else None
 
 
+def scan_conversations(limit=2000):
+    """All conversation items, for the admin dashboard. The table holds one
+    item per student plus short-lived msg# dedupe rows (filtered out here);
+    at this project's scale a paginated scan is cheap and simple."""
+    items = []
+    start_key = None
+    while len(items) < limit:
+        kwargs = {"Limit": min(limit - len(items), 500)}
+        if start_key:
+            kwargs["ExclusiveStartKey"] = start_key
+        resp = _t().scan(**kwargs)
+        items.extend(
+            i for i in resp.get("Items", [])
+            if not str(i.get("wa_id", "")).startswith("msg#")
+        )
+        start_key = resp.get("LastEvaluatedKey")
+        if not start_key:
+            break
+    return items
+
+
 def due_now(limit=100):
     """Conversations whose next scheduled action is due. Drives the sweeper."""
     items = []

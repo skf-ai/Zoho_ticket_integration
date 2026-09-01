@@ -37,6 +37,8 @@ def lambda_handler(event, context):
     )
 
     if method == "GET":
+        if "admin" in path:
+            return _admin_dashboard(event)
         if "health" in path:
             health = agent.health()
             config_ok = not config.validate_production()
@@ -53,6 +55,36 @@ def lambda_handler(event, context):
         return _handle_whatsapp_inbound(event)
 
     return _resp(405, "Method not allowed")
+
+
+# --- GET: admin dashboard ------------------------------------------------------
+
+def _admin_dashboard(event):
+    """Protected HTML dashboard. Requires ?key= to match admin_dashboard_key in
+    Secrets Manager; when the key is unset or wrong we answer 404 (not 401) so
+    the page's existence is not advertised."""
+    from . import admin_dashboard, billing  # local import: off the hot paths
+
+    configured = config.get("admin_dashboard_key")
+    supplied = (event.get("queryStringParameters") or {}).get("key", "")
+    if not configured or not hmac.compare_digest(supplied, configured):
+        return _resp(404, "Not found")
+
+    metrics = admin_dashboard.aggregate(state_store.scan_conversations())
+    try:
+        live_costs = billing.fetch_all()
+    except Exception as e:  # noqa: BLE001 - billing must never break the page
+        print(f"[admin] billing fetch failed: {type(e).__name__}")
+        live_costs = None
+    return {
+        "statusCode": 200,
+        "headers": {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex",
+        },
+        "body": admin_dashboard.render(metrics, live_costs),
+    }
 
 
 # --- GET: Meta verification ----------------------------------------------------

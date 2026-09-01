@@ -102,6 +102,13 @@ Resources:
             TableName: !Ref ConversationStateTable
         - AWSSecretsManagerGetSecretValuePolicy:
             SecretArn: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretName}-*
+        # Admin dashboard: read the real month-to-date bill. Cost Explorer has
+        # no resource-level scoping; results are cached in-process for an hour
+        # because each API call itself costs $0.01.
+        - Statement:
+            - Effect: Allow
+              Action: ce:GetCostAndUsage
+              Resource: "*"
       Events:
         WhatsappVerify:
           Type: Api
@@ -122,6 +129,11 @@ Resources:
           Type: Api
           Properties:
             Path: /health
+            Method: get
+        AdminDashboard:
+          Type: Api
+          Properties:
+            Path: /admin
             Method: get
 
   SweeperFunction:

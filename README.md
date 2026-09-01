@@ -58,9 +58,14 @@ AWS Secrets Manager secret `siddhanta/whatsapp-zoho` must contain:
   "whatsapp_app_secret": "...",
   "zoho_webhook_secret": "generate-a-long-random-value",
   "llm_api_key": "...",
-  "lms_admin_wa_id": "919999999999"
+  "lms_admin_wa_id": "919999999999",
+  "admin_dashboard_key": "generate-a-long-random-value"
 }
 ```
+
+`admin_dashboard_key` is optional: when set, `GET /admin?key=<value>` serves a
+private HTML dashboard (spend estimates, ticket reports by category, and an
+admin-response timeline). Without it the route answers 404.
 
 Never commit this JSON. Replace `<LMS_URL>` and `<SUPPORT_EMAIL>` in every
 knowledge file before deployment. `/health` returns HTTP 503 until required
