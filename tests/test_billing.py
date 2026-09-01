@@ -75,5 +75,5 @@ def test_render_badges_live_and_estimate():
 
 def test_render_all_estimates_without_billing():
     page = admin_dashboard.render(admin_dashboard.aggregate([], now=NOW))
-    assert "badge est" in page and "$" not in page.split("Realtime spend")[1].split("Tickets by")[0][:200] or True
+    assert page.count("badge est") >= 3   # all three provider cards fall back
     assert "ESTIMATE" in page

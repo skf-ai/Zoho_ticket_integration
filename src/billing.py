@@ -69,11 +69,22 @@ def fetch_aws(now):
              for g in groups),
             key=lambda kv: -kv[1],
         )
-        total = sum(v for _, v in by_service)
+        account_total = sum(v for _, v in by_service)
+        # The AWS account is shared with other Siddhanta projects, so Cost
+        # Explorer's total includes their spend too. This project runs only on
+        # these serverless services -- report that slice as the headline and
+        # keep the account total in the detail for context.
+        ours_markers = ("lambda", "dynamodb", "api gateway", "cloudwatch",
+                        "queue", "notification", "secrets", "storage")
+        ours = [(k, v) for k, v in by_service
+                if any(marker in k.lower() for marker in ours_markers)]
+        ours_total = sum(v for _, v in ours)
         top = " · ".join(f"{k.replace('Amazon ', '').replace('AWS ', '')} ${v:.2f}"
-                         for k, v in by_service[:4] if v >= 0.005)
-        return {"source": "live", "amount": total, "currency": "USD",
-                "detail": f"{label}: " + (top or "all services under $0.01")}
+                         for k, v in ours[:4] if v >= 0.005)
+        return {"source": "live", "amount": ours_total, "currency": "USD",
+                "detail": (f"{label}, this project's services: "
+                           f"{top or 'all under $0.01'} — whole AWS account "
+                           f"(all projects): ${account_total:.2f}")}
     except (ClientError, BotoCoreError, KeyError, IndexError) as e:
         return _unavailable(f"Cost Explorer: {type(e).__name__}")
 

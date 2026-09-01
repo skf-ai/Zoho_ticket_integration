@@ -1,10 +1,14 @@
-"""Admin dashboard: one protected HTML page summarising spend, tickets and
+"""Admin dashboard: one protected HTML app summarising spend, tickets and
 how quickly the admin side acted.
 
+Two views served as a single page: OVERVIEW (fits one screen; the numbers that
+matter now, with hover popovers for detail) and REPORTS (the full ticket
+timeline and breakdowns), switched client-side via the left menu.
+
 Everything is computed from the conversation items the system already stores in
-DynamoDB -- no new write paths, no extra services. Costs shown are ESTIMATES
-derived from usage counters (nudges, reminders, message history); the exact
-bills stay in each provider's console, which the page links to.
+DynamoDB -- no new write paths, no extra services. Spend cards show the real
+provider bill where `billing.fetch_all()` could reach it (badged LIVE) and a
+usage-based estimate otherwise (badged ESTIMATE, with the reason).
 
 `aggregate()` and `render()` are pure functions so tests need no AWS.
 """
@@ -148,7 +152,8 @@ def _bars(counts):
     for name, count in counts.items():
         width = max(int(100 * count / peak), 4)
         rows.append(
-            f"<div class='bar-row'><span class='bar-label'>{html.escape(name)}</span>"
+            f"<div class='bar-row' title='{count} ticket(s) in {html.escape(name)}'>"
+            f"<span class='bar-label'>{html.escape(name)}</span>"
             f"<span class='bar-track'><span class='bar' style='width:{width}%'></span></span>"
             f"<span class='bar-num'>{count}</span></div>"
         )
@@ -156,7 +161,7 @@ def _bars(counts):
 
 
 def render(metrics, billing=None):
-    """Return the full dashboard HTML.
+    """Return the full dashboard HTML (overview + reports views).
 
     `billing` is the optional result of billing.fetch_all(): real provider
     spend where reachable. Cards fall back to usage-based estimates and every
@@ -178,6 +183,7 @@ def render(metrics, billing=None):
     ai_v, ai_badge, ai_note = _money("openai", f"₹{m['ai_cost_inr']:.0f}")
     meta_v, meta_badge, meta_note = _money("meta", f"₹{m['meta_cost_inr']:.0f}")
     aws_v, aws_badge, aws_note = _money("aws", f"₹{AWS_FLAT_INR}/mo")
+
     avg_close = _fmt_days(m["avg_days_to_close"])
     pct_clean = ("-" if m["pct_closed_without_nudge"] is None
                  else f"{m['pct_closed_without_nudge']:.0f}%")
@@ -202,121 +208,205 @@ def render(metrics, billing=None):
         )
     table_rows = "".join(rows) or "<tr><td colspan='8' class='muted'>No tickets yet.</td></tr>"
 
+    overdue_alert = " alert" if m["overdue"] else ""
+    gen_short = html.escape(m["generated_at"].replace("T", " ").replace("Z", " UTC"))
+
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<meta http-equiv="refresh" content="60">
 <title>Support Line Admin</title>
 <style>
-  :root {{ --ink:#26221C; --muted:#6B6459; --line:#DDD9D1; --green:#1B8A50;
-           --orange:#C0670F; --blue:#2F5FBE; --red:#B4442C; --paper:#F7F6F2; }}
+  :root {{ --ink:#26221C; --muted:#6B6459; --line:#E3E0D9; --green:#1B8A50;
+           --orange:#C0670F; --blue:#2F5FBE; --red:#B4442C; --paper:#F7F6F2;
+           --side:#26221C; --card:#FFFFFF; }}
   * {{ box-sizing:border-box; }}
+  html, body {{ height:100%; }}
   body {{ margin:0; background:var(--paper); color:var(--ink);
-         font-family:"Segoe UI",system-ui,sans-serif; font-size:15px; }}
-  .wrap {{ max-width:1180px; margin:0 auto; padding:26px 20px 40px; }}
-  h1 {{ font-size:1.5rem; margin:0 0 2px; }}
-  .sub {{ color:var(--muted); font-size:.85rem; margin-bottom:22px; }}
-  h2 {{ font-size:1.05rem; margin:26px 0 10px; }}
-  .cards {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }}
-  .card {{ background:#fff; border:1.5px solid var(--line); border-radius:10px; padding:12px 14px; }}
-  .card .v {{ font-size:1.6rem; font-weight:600; font-variant-numeric:tabular-nums; }}
-  .card .l {{ font-size:.78rem; color:var(--muted); }}
-  .card.alert .v {{ color:var(--red); }}
-  .cost-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }}
-  .cost {{ background:#fff; border:1.5px solid var(--line); border-left-width:5px; border-radius:10px; padding:12px 14px; }}
-  .cost .s {{ font-size:.72rem; font-weight:600; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-bottom:2px; }}
-  .badge {{ border-radius:4px; padding:1px 6px; font-size:.6rem; font-weight:700; letter-spacing:.06em; vertical-align:1px; }}
+         font-family:"Segoe UI",system-ui,sans-serif; font-size:15px; display:flex; }}
+  [hidden] {{ display:none !important; }}
+
+  aside {{ flex:0 0 190px; background:var(--side); color:#EDEAE4; display:flex;
+          flex-direction:column; padding:22px 0; }}
+  .brand {{ padding:0 22px 18px; font-weight:600; font-size:1.02rem; letter-spacing:.02em; }}
+  .brand small {{ display:block; color:#A79F92; font-weight:400; font-size:.72rem; margin-top:2px; }}
+  nav a {{ display:block; padding:11px 22px; color:#C9C3B8; text-decoration:none;
+          font-size:.9rem; border-left:3px solid transparent; cursor:pointer; }}
+  nav a:hover {{ color:#fff; background:#332E27; }}
+  nav a.on {{ color:#fff; border-left-color:var(--orange); background:#332E27; font-weight:600; }}
+  .side-foot {{ margin-top:auto; padding:14px 22px 0; font-size:.68rem; color:#A79F92; line-height:1.5; }}
+  .dot {{ display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--green);
+         margin-right:6px; animation:pulse 2s infinite; }}
+  @keyframes pulse {{ 50% {{ opacity:.35; }} }}
+
+  main {{ flex:1; min-width:0; overflow:auto; padding:22px 28px; }}
+  .view {{ max-width:1220px; }}
+  .topline {{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:16px; }}
+  h1 {{ font-size:1.25rem; margin:0; }}
+  .when {{ color:var(--muted); font-size:.78rem; }}
+  h2 {{ font-size:.8rem; text-transform:uppercase; letter-spacing:.12em; color:var(--muted);
+       margin:20px 0 10px; }}
+
+  .tiles {{ display:grid; grid-template-columns:repeat(6,1fr); gap:12px; }}
+  .tile {{ background:var(--card); border:1.5px solid var(--line); border-radius:12px;
+          padding:12px 14px; transition:transform .12s, box-shadow .12s; cursor:default; }}
+  .tile:hover {{ transform:translateY(-2px); box-shadow:0 4px 14px rgba(38,34,28,.1); }}
+  .tile .v {{ font-size:1.65rem; font-weight:650; font-variant-numeric:tabular-nums; line-height:1.1; }}
+  .tile .l {{ font-size:.74rem; color:var(--muted); margin-top:2px; }}
+  .tile.alert {{ border-color:var(--red); }}
+  .tile.alert .v {{ color:var(--red); }}
+
+  .costs {{ display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }}
+  .cost {{ position:relative; background:var(--card); border:1.5px solid var(--line);
+          border-top:4px solid var(--red); border-radius:12px; padding:12px 14px;
+          transition:transform .12s, box-shadow .12s; cursor:default; }}
+  .cost.freebie {{ border-top-color:var(--green); }}
+  .cost:hover {{ transform:translateY(-2px); box-shadow:0 6px 18px rgba(38,34,28,.12); z-index:5; }}
+  .cost .s {{ font-size:.7rem; font-weight:600; text-transform:uppercase; letter-spacing:.07em;
+             color:var(--muted); display:flex; justify-content:space-between; align-items:center; }}
+  .cost .v {{ font-size:1.5rem; font-weight:650; margin:4px 0 2px; font-variant-numeric:tabular-nums; }}
+  .cost .u {{ font-size:.74rem; color:var(--muted); }}
+  .badge {{ border-radius:4px; padding:1px 6px; font-size:.58rem; font-weight:700; letter-spacing:.06em; }}
   .badge.live {{ background:var(--green); color:#fff; }}
   .badge.est {{ background:#E5E2DB; color:var(--muted); }}
-  .cost .v {{ font-size:1.25rem; font-weight:600; }}
-  .cost .l {{ font-size:.78rem; color:var(--muted); line-height:1.4; }}
-  .cost a {{ color:inherit; }}
+  .pop {{ display:none; position:absolute; left:0; right:-40px; top:calc(100% + 6px);
+         background:#fff; border:1.5px solid var(--line); border-radius:10px;
+         box-shadow:0 10px 26px rgba(38,34,28,.18); padding:11px 13px;
+         font-size:.78rem; line-height:1.5; color:var(--ink); }}
+  .cost:hover .pop {{ display:block; }}
+  .pop a {{ color:var(--blue); }}
+  .hint {{ font-size:.72rem; color:var(--muted); margin-top:8px; }}
+
+  .duo {{ display:grid; grid-template-columns:3fr 2fr; gap:12px; }}
+  .panel {{ background:var(--card); border:1.5px solid var(--line); border-radius:12px; padding:14px 16px; }}
+  .panel h2 {{ margin-top:0; }}
   .bar-row {{ display:flex; align-items:center; gap:10px; margin-bottom:7px; }}
-  .bar-label {{ flex:0 0 130px; font-size:.85rem; }}
-  .bar-track {{ flex:1; background:#EBE9E3; border-radius:6px; height:16px; overflow:hidden; }}
-  .bar {{ display:block; height:100%; background:var(--orange); border-radius:6px; }}
-  .bar-num {{ flex:0 0 34px; text-align:right; font-variant-numeric:tabular-nums; font-weight:600; }}
-  table {{ width:100%; border-collapse:collapse; background:#fff; border:1.5px solid var(--line);
-           border-radius:10px; overflow:hidden; font-size:.85rem; }}
-  th {{ text-align:left; font-size:.68rem; text-transform:uppercase; letter-spacing:.08em;
-       color:var(--muted); padding:8px 10px; border-bottom:1.5px solid var(--line); }}
-  td {{ padding:7px 10px; border-bottom:1px solid #EEECE7; }}
+  .bar-label {{ flex:0 0 120px; font-size:.82rem; }}
+  .bar-track {{ flex:1; background:#EBE9E3; border-radius:6px; height:14px; overflow:hidden; }}
+  .bar {{ display:block; height:100%; background:var(--orange); border-radius:6px;
+         transition:width .4s; }}
+  .bar-num {{ flex:0 0 30px; text-align:right; font-variant-numeric:tabular-nums; font-weight:600; }}
+  .mini {{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }}
+  .mini .tile .v {{ font-size:1.3rem; }}
+
+  table {{ width:100%; border-collapse:collapse; background:var(--card);
+           border:1.5px solid var(--line); border-radius:12px; overflow:hidden; font-size:.84rem; }}
+  th {{ text-align:left; font-size:.66rem; text-transform:uppercase; letter-spacing:.08em;
+       color:var(--muted); padding:9px 11px; border-bottom:1.5px solid var(--line); }}
+  td {{ padding:8px 11px; border-bottom:1px solid #EFEDE8; }}
+  tr:hover td {{ background:#FBFAF7; }}
   tr:last-child td {{ border-bottom:none; }}
   td.num {{ text-align:right; font-variant-numeric:tabular-nums; }}
-  .pill {{ border:1.5px solid; border-radius:999px; padding:1px 9px; font-size:.72rem; font-weight:600; }}
+  .pill {{ border:1.5px solid; border-radius:999px; padding:1px 9px; font-size:.7rem; font-weight:600; }}
   .good {{ color:var(--green); font-weight:700; }}
   .warn {{ color:var(--orange); font-weight:700; }}
   .bad {{ color:var(--red); font-weight:700; }}
   .muted {{ color:var(--muted); }}
-  .note {{ font-size:.78rem; color:var(--muted); margin-top:8px; }}
-</style></head><body><div class="wrap">
-  <h1>Support Line — Admin Panel</h1>
-  <div class="sub">Live from system records · generated {html.escape(m["generated_at"])} UTC ·
-    auto-refreshes every 60s · student numbers masked</div>
+  .note {{ font-size:.76rem; color:var(--muted); margin-top:10px; line-height:1.5; }}
+</style></head><body>
 
-  <div class="cards">
-    <div class="card"><div class="v">{m["conversations"]}</div><div class="l">conversations stored</div></div>
-    <div class="card"><div class="v">{m["tickets_total"]}</div><div class="l">tickets, all time</div></div>
-    <div class="card"><div class="v">{m["open"]}</div><div class="l">open now</div></div>
-    <div class="card"><div class="v">{m["waiting"]}</div><div class="l">awaiting student</div></div>
-    <div class="card"><div class="v">{m["closed"]}</div><div class="l">closed</div></div>
-    <div class="card{' alert' if m["overdue"] else ''}"><div class="v">{m["overdue"]}</div><div class="l">overdue right now</div></div>
-  </div>
+<aside>
+  <div class="brand">Support Line<small>Siddhanta Knowledge Foundation</small></div>
+  <nav>
+    <a data-v="overview" onclick="show('overview')">Overview</a>
+    <a data-v="reports" onclick="show('reports')">Reports</a>
+  </nav>
+  <div class="side-foot"><span class="dot"></span>live · reloads every 60s<br>{gen_short}</div>
+</aside>
 
-  <h2>Realtime spend — what we use and what it costs</h2>
-  <div class="cost-grid">
-    <div class="cost" style="border-left-color:var(--red)">
-      <div class="s">OpenAI · the AI brain {ai_badge}</div>
-      <div class="v">{ai_v}</div>
-      <div class="l"><b>{m["ai_turns"]}</b> answered turns recorded ·
-        used for: reading each message, choosing answer/ticket<br>
-        {ai_note}<br>
-        console: <a href="https://platform.openai.com/usage">platform.openai.com/usage</a></div>
+<main>
+  <section id="overview" class="view">
+    <div class="topline"><h1>Admin Panel — Overview</h1>
+      <span class="when">hover any card for detail</span></div>
+
+    <div class="tiles">
+      <div class="tile" title="Every student who has ever messaged the bot"><div class="v">{m["conversations"]}</div><div class="l">conversations</div></div>
+      <div class="tile" title="Tickets ever raised from WhatsApp"><div class="v">{m["tickets_total"]}</div><div class="l">tickets, all time</div></div>
+      <div class="tile" title="Waiting on the LMS admin right now"><div class="v">{m["open"]}</div><div class="l">open now</div></div>
+      <div class="tile" title="Resolved; waiting for the student's Yes/No"><div class="v">{m["waiting"]}</div><div class="l">awaiting student</div></div>
+      <div class="tile" title="Confirmed fixed by the student, or auto-closed"><div class="v">{m["closed"]}</div><div class="l">closed</div></div>
+      <div class="tile{overdue_alert}" title="Past the SLA clock and being chased by the sweeper"><div class="v">{m["overdue"]}</div><div class="l">overdue right now</div></div>
     </div>
-    <div class="cost" style="border-left-color:var(--red)">
-      <div class="s">Meta WhatsApp · reminders {meta_badge}</div>
-      <div class="v">{meta_v}</div>
-      <div class="l"><b>{m["template_sends"]}</b> template sends recorded ·
-        used for: admin nudges, "resolved?" checks, close notices<br>
-        {meta_note}<br>
-        chat replies: ₹0 · console: WhatsApp Manager → Insights</div>
-    </div>
-    <div class="cost" style="border-left-color:var(--red)">
-      <div class="s">AWS · hosting {aws_badge}</div>
-      <div class="v">{aws_v}</div>
-      <div class="l">used for: Lambda (bot + sweeper), DynamoDB memory, API Gateway, logs, secrets vault<br>
-        {aws_note}<br>
-        console: AWS Console → Billing</div>
-    </div>
-    <div class="cost" style="border-left-color:var(--green)">
-      <div class="s">Zoho Desk · tickets</div>
-      <div class="v">₹0 extra</div>
-      <div class="l">included in the existing Zoho One subscription<br>
-        used for: the ticket board, audit trail, admin emails</div>
-    </div>
-  </div>
-  <div class="note"><span class="badge live">LIVE</span> = month-to-date figure fetched from that
-    provider's own billing API (refreshed hourly). <span class="badge est">ESTIMATE</span> = computed
-    from this system's usage counters because the billing API is not configured/reachable — the
-    reason is shown on the card. Page reloads every 60s.</div>
 
-  <h2>Tickets by category</h2>
-  {_bars(m["by_category"])}
+    <h2>Spend</h2>
+    <div class="costs">
+      <div class="cost">
+        <div class="s"><span>OpenAI · AI brain</span>{ai_badge}</div>
+        <div class="v">{ai_v}</div>
+        <div class="u">{m["ai_turns"]} answered turns</div>
+        <div class="pop">Reads each student message and chooses: answer or ticket.
+          Unit ≈ ₹{AI_TURN_INR:.2f}/conversation.<br>{ai_note}<br>
+          Bill: <a href="https://platform.openai.com/usage">platform.openai.com/usage</a></div>
+      </div>
+      <div class="cost">
+        <div class="s"><span>Meta · WhatsApp</span>{meta_badge}</div>
+        <div class="v">{meta_v}</div>
+        <div class="u">{m["template_sends"]} template sends</div>
+        <div class="pop">Chat replies are free; only scheduled templates are paid
+          (admin nudges, "resolved?" checks, close notices) at ₹{TEMPLATE_INR:.3f} incl. GST.<br>
+          {meta_note}<br>Bill: WhatsApp Manager → Insights</div>
+      </div>
+      <div class="cost">
+        <div class="s"><span>AWS · hosting</span>{aws_badge}</div>
+        <div class="v">{aws_v}</div>
+        <div class="u">Lambda · DynamoDB · API GW</div>
+        <div class="pop">Serverless hosting: runs only when messages arrive.<br>
+          {aws_note}<br>Bill: AWS Console → Billing</div>
+      </div>
+      <div class="cost freebie">
+        <div class="s"><span>Zoho Desk · tickets</span></div>
+        <div class="v">₹0 extra</div>
+        <div class="u">inside Zoho One</div>
+        <div class="pop">Ticket board, audit trail and admin email notifications —
+          covered by the existing Zoho One subscription.</div>
+      </div>
+    </div>
+    <div class="hint"><span class="badge live">LIVE</span> figure fetched from that provider's own
+      billing API (cached 1h) · <span class="badge est">ESTIMATE</span> computed from usage counters;
+      the reason is shown in the card's hover.</div>
 
-  <h2>Admin response — did tickets need chasing?</h2>
-  <div class="cards">
-    <div class="card"><div class="v">{avg_close}</div><div class="l">average time to close</div></div>
-    <div class="card"><div class="v">{pct_clean}</div><div class="l">closed with zero reminders</div></div>
-    <div class="card"><div class="v">{m["avg_nudges_per_ticket"]:.1f}</div><div class="l">admin nudges per ticket</div></div>
-  </div>
+    <div class="duo" style="margin-top:20px">
+      <div class="panel"><h2>Tickets by category</h2>{_bars(m["by_category"])}</div>
+      <div class="panel"><h2>Admin response</h2>
+        <div class="mini">
+          <div class="tile" title="From ticket creation to confirmed closure"><div class="v">{avg_close}</div><div class="l">avg time to close</div></div>
+          <div class="tile" title="Closed before any automatic reminder was needed"><div class="v">{pct_clean}</div><div class="l">zero-reminder closes</div></div>
+          <div class="tile" title="Automatic WhatsApp reminders sent per ticket"><div class="v">{m["avg_nudges_per_ticket"]:.1f}</div><div class="l">nudges per ticket</div></div>
+        </div>
+        <div class="note">Full per-ticket timeline is under <b>Reports</b>.</div>
+      </div>
+    </div>
+  </section>
 
-  <h2>Ticket timeline (latest {len(m["tickets"])})</h2>
-  <table>
-    <tr><th>Student</th><th>Ticket</th><th>Category</th><th>Status</th>
-        <th>Created</th><th>Age / time to close</th><th>Admin nudges</th><th>Student reminders</th></tr>
-    {table_rows}
-  </table>
-  <div class="note">Nudges column: <span class="good">0</span> = admin acted before any reminder ·
-    <span class="warn">1</span> = one reminder needed · <span class="bad">2+</span> = repeated chasing.
-    Closed tickets no longer show their ticket number (it is cleared on closure by design).</div>
-</div></body></html>"""
+  <section id="reports" class="view" hidden>
+    <div class="topline"><h1>Admin Panel — Reports</h1>
+      <span class="when">latest {len(m["tickets"])} tickets</span></div>
+
+    <h2>Ticket timeline — who, what, and how fast we acted</h2>
+    <table>
+      <tr><th>Student</th><th>Ticket</th><th>Category</th><th>Status</th>
+          <th>Created</th><th>Age / time to close</th><th>Admin nudges</th><th>Student reminders</th></tr>
+      {table_rows}
+    </table>
+    <div class="note">Nudges: <span class="good">0</span> = admin acted before any reminder ·
+      <span class="warn">1</span> = one reminder needed · <span class="bad">2+</span> = repeated chasing.
+      Closed tickets no longer show their ticket number (cleared on closure by design).
+      Student numbers are masked to the last 4 digits everywhere.</div>
+
+    <h2 style="margin-top:24px">Categories</h2>
+    <div class="panel">{_bars(m["by_category"])}</div>
+  </section>
+</main>
+
+<script>
+function show(v) {{
+  document.querySelectorAll('.view').forEach(function (el) {{ el.hidden = true; }});
+  document.getElementById(v).hidden = false;
+  document.querySelectorAll('nav a').forEach(function (a) {{
+    a.classList.toggle('on', a.dataset.v === v);
+  }});
+  location.hash = v;
+}}
+show(location.hash === '#reports' ? 'reports' : 'overview');
+setTimeout(function () {{ location.reload(); }}, 60000);
+</script>
+</body></html>"""
