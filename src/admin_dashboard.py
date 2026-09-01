@@ -234,6 +234,10 @@ def render(metrics, billing=None):
   nav a:hover {{ color:#fff; background:#332E27; }}
   nav a.on {{ color:#fff; border-left-color:var(--orange); background:#332E27; font-weight:600; }}
   .side-foot {{ margin-top:auto; padding:14px 22px 0; font-size:.68rem; color:#A79F92; line-height:1.5; }}
+  .refresh {{ display:block; width:100%; margin-bottom:10px; padding:8px 10px;
+             background:#332E27; color:#EDEAE4; border:1.5px solid #4A443B;
+             border-radius:8px; font-size:.78rem; font-weight:600; cursor:pointer; }}
+  .refresh:hover {{ background:#3E382F; border-color:var(--orange); }}
   .dot {{ display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--green);
          margin-right:6px; animation:pulse 2s infinite; }}
   @keyframes pulse {{ 50% {{ opacity:.35; }} }}
@@ -310,7 +314,10 @@ def render(metrics, billing=None):
     <a data-v="overview" onclick="show('overview')">Overview</a>
     <a data-v="reports" onclick="show('reports')">Reports</a>
   </nav>
-  <div class="side-foot"><span class="dot"></span>live · reloads every 60s<br>{gen_short}</div>
+  <div class="side-foot">
+    <button class="refresh" onclick="location.reload()">⟳ Refresh data</button>
+    <span class="dot"></span>live data · refresh manually<br>{gen_short}
+  </div>
 </aside>
 
 <main>
@@ -407,6 +414,5 @@ function show(v) {{
   location.hash = v;
 }}
 show(location.hash === '#reports' ? 'reports' : 'overview');
-setTimeout(function () {{ location.reload(); }}, 60000);
 </script>
 </body></html>"""
