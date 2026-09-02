@@ -16,6 +16,17 @@ from the knowledge base, live-verified end to end.
 Alert email `AlertEmail` was set during deploy; the SNS subscription
 confirmation email must be accepted for alarms to deliver.
 
+**2026-09-01 progress:** Admin panel shipped at `GET /admin` (key-protected,
+404 without): overview + reports views, hover detail, manual refresh, ticket
+timeline with nudge accountability, and spend cards pulling REAL provider
+bills (AWS Cost Explorer scoped to this project's services, OpenAI org costs,
+Meta conversation analytics) with LIVE/ESTIMATE badges — verified in
+production, all three sources live. New secret keys: `admin_dashboard_key`,
+`whatsapp_waba_id`, `openai_admin_key`. Pre-live test suite added:
+`TESTING.md` (5 phases + production-ready sign-off, ~₹25–30 per full pass)
+and `loadtest.py` (signed-webhook burst, single-conversation hammer,
+duplicate-storm dedupe test). 71 automated tests green.
+
 **2026-08-27 progress:** full ticket lifecycle verified on the live number —
 escalation with pre-ticket intake (registered email, error text, urgency),
 urgent ticket #107 created and closed via the student's "Yes" tap. Agent now
