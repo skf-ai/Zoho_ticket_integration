@@ -124,6 +124,39 @@ def create_ticket(subject, description, contact_id, category=None):
     return None
 
 
+def list_tickets(limit=60):
+    """Newest tickets from the Zoho Desk archive, for the admin Reports view.
+
+    The dashboard's own store keeps only one live record per student; Zoho is
+    the permanent per-ticket history. Returns a list of plain dicts, or None
+    when Zoho is unreachable (the dashboard then says so instead of lying).
+    """
+    access_token = get_access_token()
+    if not access_token:
+        return None
+    resp = requests.get(
+        f"{config.ZOHO_API_BASE}/tickets",
+        headers=_headers(access_token),
+        params={"limit": min(limit, 100), "sortBy": "-createdTime"},
+        timeout=15,
+    )
+    if resp.status_code == 204:
+        return []
+    if resp.status_code != 200:
+        print(f"Error listing tickets ({resp.status_code}): {resp.text[:200]}")
+        return None
+    out = []
+    for t in resp.json().get("data", []):
+        out.append({
+            "number": str(t.get("ticketNumber") or t.get("id") or "-"),
+            "subject": str(t.get("subject") or "")[:80],
+            "status": str(t.get("status") or "-"),
+            "category": str(t.get("category") or "-"),
+            "created": str(t.get("createdTime") or "")[:10],
+        })
+    return out
+
+
 def close_ticket(ticket_id, comment=None):
     """Set a ticket's status to Closed. Returns True on success.
 

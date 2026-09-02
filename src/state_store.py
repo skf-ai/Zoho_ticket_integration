@@ -47,6 +47,13 @@ DUE_BUCKET = "DUE"
 MAX_HISTORY_MESSAGES = 20
 STATE_RETENTION_DAYS = int(os.environ.get("STATE_RETENTION_DAYS", "90"))
 
+# Abuse brakes. AI processing is the only per-message cost (~Rs 0.17), so these
+# bound the worst-case spend: one number can trigger at most RATE_LIMIT_PER_HOUR
+# AI calls per hour, and everyone combined at most DAILY_AI_BUDGET per day
+# (500 x Rs 0.17 = about Rs 85/day absolute ceiling).
+RATE_LIMIT_PER_HOUR = int(os.environ.get("RATE_LIMIT_PER_HOUR", "30"))
+DAILY_AI_BUDGET = int(os.environ.get("DAILY_AI_BUDGET", "500"))
+
 _table = None
 
 
@@ -84,8 +91,9 @@ def find_by_ticket(ticket_id):
 
 def scan_conversations(limit=2000):
     """All conversation items, for the admin dashboard. The table holds one
-    item per student plus short-lived msg# dedupe rows (filtered out here);
-    at this project's scale a paginated scan is cheap and simple."""
+    item per student plus short-lived msg# dedupe rows and budget# counters
+    (both filtered out here); at this project's scale a paginated scan is
+    cheap and simple."""
     items = []
     start_key = None
     while len(items) < limit:
@@ -95,12 +103,55 @@ def scan_conversations(limit=2000):
         resp = _t().scan(**kwargs)
         items.extend(
             i for i in resp.get("Items", [])
-            if not str(i.get("wa_id", "")).startswith("msg#")
+            if not str(i.get("wa_id", "")).startswith(("msg#", "budget#"))
         )
         start_key = resp.get("LastEvaluatedKey")
         if not start_key:
             break
     return items
+
+
+def bump_rate(wa_id, now=None):
+    """Count this student's messages in the current clock hour (including this
+    one). Increment-within-hour, reset-on-new-hour; approximate under heavy
+    concurrency, which is fine for an abuse brake."""
+    from botocore.exceptions import ClientError
+
+    now = now or workdays.now_utc()
+    hour = now.strftime("%Y-%m-%dT%H")
+    try:
+        resp = _t().update_item(
+            Key={"wa_id": wa_id},
+            UpdateExpression="ADD rate_count :one",
+            ConditionExpression="rate_hour = :h",
+            ExpressionAttributeValues={":one": 1, ":h": hour},
+            ReturnValues="UPDATED_NEW",
+        )
+        return int(resp["Attributes"]["rate_count"])
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise
+        _t().update_item(
+            Key={"wa_id": wa_id},
+            UpdateExpression="SET rate_hour = :h, rate_count = :one",
+            ExpressionAttributeValues={":h": hour, ":one": 1},
+        )
+        return 1
+
+
+def bump_ai_budget(now=None):
+    """Global count of AI-processed messages today. The absolute daily spend
+    ceiling: past DAILY_AI_BUDGET the handler stops calling the model."""
+    now = now or workdays.now_utc()
+    day = now.strftime("%Y-%m-%d")
+    resp = _t().update_item(
+        Key={"wa_id": f"budget#{day}"},
+        UpdateExpression="ADD ai_calls :one SET expires_at = :ttl",
+        ExpressionAttributeValues={":one": 1,
+                                   ":ttl": int(now.timestamp()) + 172800},
+        ReturnValues="UPDATED_NEW",
+    )
+    return int(resp["Attributes"]["ai_calls"])
 
 
 def due_now(limit=100):

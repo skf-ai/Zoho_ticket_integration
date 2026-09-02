@@ -146,6 +146,13 @@ Action requested: <what the admin should check or do>
 
 Be specific and brief.
 
+The detail-collection question may be asked ONCE per problem, ever. After the \
+student's next message -- whatever it says, even if it answers nothing -- raise \
+the ticket immediately, recording unanswered items as "not provided". Never \
+re-ask, never add extra checklists or "reply tried/not tried" gates, and never \
+make the ticket conditional on troubleshooting steps the knowledge base answer \
+already covered.
+
 Tell the student their ticket is raised and that it will be resolved within a \
 maximum of 3 working days.
 

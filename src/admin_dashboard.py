@@ -160,15 +160,52 @@ def _bars(counts):
     return "".join(rows)
 
 
-def render(metrics, billing=None):
+def render(metrics, billing=None, zoho_tickets=None):
     """Return the full dashboard HTML (overview + reports views).
 
     `billing` is the optional result of billing.fetch_all(): real provider
     spend where reachable. Cards fall back to usage-based estimates and every
     figure is badged LIVE or ESTIMATE so the reader always knows which.
+
+    `zoho_tickets` is the optional Zoho Desk archive (zoho_client.list_tickets):
+    the Reports view shows every individual ticket from it, since the local
+    store keeps only one live record per student. None = archive unreachable.
     """
     m = metrics
     b = billing or {}
+
+    zoho_status_colors = {"open": "#C0670F", "on hold": "#6B6459",
+                          "escalated": "#B4442C", "resolved": "#2F5FBE",
+                          "closed": "#1B8A50"}
+    if zoho_tickets is None:
+        zoho_section = ("<p class='muted'>Zoho Desk archive unreachable right now "
+                        "— showing only the live student records below.</p>")
+        zoho_cats = None
+    elif not zoho_tickets:
+        zoho_section = "<p class='muted'>No tickets in Zoho Desk yet.</p>"
+        zoho_cats = None
+    else:
+        zrows = []
+        zoho_cats = {}
+        for t in zoho_tickets:
+            cat = (t.get("category") or "-").strip() or "-"
+            if cat != "-":
+                zoho_cats[cat] = zoho_cats.get(cat, 0) + 1
+            color = zoho_status_colors.get(str(t.get("status", "")).lower(), "#6B6459")
+            zrows.append(
+                "<tr>"
+                f"<td class='num'>#{html.escape(t.get('number', '-'))}</td>"
+                f"<td>{html.escape(t.get('subject', ''))}</td>"
+                f"<td>{html.escape(cat)}</td>"
+                f"<td><span class='pill' style='color:{color};border-color:{color}'>"
+                f"{html.escape(t.get('status', '-'))}</span></td>"
+                f"<td>{html.escape(t.get('created', ''))}</td>"
+                "</tr>"
+            )
+        zoho_section = (
+            "<table><tr><th>#</th><th>Subject</th><th>Category</th>"
+            "<th>Status</th><th>Created</th></tr>" + "".join(zrows) + "</table>"
+        )
 
     def _money(source_key, estimate_html):
         src = b.get(source_key) or {}
@@ -327,7 +364,7 @@ def render(metrics, billing=None):
 
     <div class="tiles">
       <div class="tile" title="Every student who has ever messaged the bot"><div class="v">{m["conversations"]}</div><div class="l">conversations</div></div>
-      <div class="tile" title="Tickets ever raised from WhatsApp"><div class="v">{m["tickets_total"]}</div><div class="l">tickets, all time</div></div>
+      <div class="tile" title="One live record per student; a student's newer ticket replaces their older one here. Zoho Desk keeps the full history of every individual ticket."><div class="v">{m["tickets_total"]}</div><div class="l">students with tickets</div></div>
       <div class="tile" title="Waiting on the LMS admin right now"><div class="v">{m["open"]}</div><div class="l">open now</div></div>
       <div class="tile" title="Resolved; waiting for the student's Yes/No"><div class="v">{m["waiting"]}</div><div class="l">awaiting student</div></div>
       <div class="tile" title="Confirmed fixed by the student, or auto-closed"><div class="v">{m["closed"]}</div><div class="l">closed</div></div>
@@ -386,9 +423,12 @@ def render(metrics, billing=None):
 
   <section id="reports" class="view" hidden>
     <div class="topline"><h1>Admin Panel — Reports</h1>
-      <span class="when">latest {len(m["tickets"])} tickets</span></div>
+      <span class="when">archive from Zoho Desk · live records from the system</span></div>
 
-    <h2>Ticket timeline — who, what, and how fast we acted</h2>
+    <h2>All tickets — full Zoho Desk archive (newest first)</h2>
+    {zoho_section}
+
+    <h2 style="margin-top:24px">Live student records — how fast we acted</h2>
     <table>
       <tr><th>Student</th><th>Ticket</th><th>Category</th><th>Status</th>
           <th>Created</th><th>Age / time to close</th><th>Admin nudges</th><th>Student reminders</th></tr>
@@ -397,10 +437,11 @@ def render(metrics, billing=None):
     <div class="note">Nudges: <span class="good">0</span> = admin acted before any reminder ·
       <span class="warn">1</span> = one reminder needed · <span class="bad">2+</span> = repeated chasing.
       Closed tickets no longer show their ticket number (cleared on closure by design).
-      Student numbers are masked to the last 4 digits everywhere.</div>
+      One row per student (their newest ticket); the complete per-ticket archive lives in
+      Zoho Desk. Student numbers are masked to the last 4 digits everywhere.</div>
 
     <h2 style="margin-top:24px">Categories</h2>
-    <div class="panel">{_bars(m["by_category"])}</div>
+    <div class="panel">{_bars(zoho_cats if zoho_cats else m["by_category"])}</div>
   </section>
 </main>
 

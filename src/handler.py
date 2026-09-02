@@ -63,7 +63,7 @@ def _admin_dashboard(event):
     """Protected HTML dashboard. Requires ?key= to match admin_dashboard_key in
     Secrets Manager; when the key is unset or wrong we answer 404 (not 401) so
     the page's existence is not advertised."""
-    from . import admin_dashboard, billing  # local import: off the hot paths
+    from . import admin_dashboard, billing, zoho_client  # off the hot paths
 
     configured = config.get("admin_dashboard_key")
     supplied = (event.get("queryStringParameters") or {}).get("key", "")
@@ -76,6 +76,11 @@ def _admin_dashboard(event):
     except Exception as e:  # noqa: BLE001 - billing must never break the page
         print(f"[admin] billing fetch failed: {type(e).__name__}")
         live_costs = None
+    try:
+        zoho_tickets = zoho_client.list_tickets()
+    except Exception as e:  # noqa: BLE001 - the archive must never break the page
+        print(f"[admin] zoho ticket list failed: {type(e).__name__}")
+        zoho_tickets = None
     return {
         "statusCode": 200,
         "headers": {
@@ -83,7 +88,7 @@ def _admin_dashboard(event):
             "Cache-Control": "no-store",
             "X-Robots-Tag": "noindex",
         },
-        "body": admin_dashboard.render(metrics, live_costs),
+        "body": admin_dashboard.render(metrics, live_costs, zoho_tickets),
     }
 
 
@@ -143,6 +148,12 @@ def _handle_whatsapp_inbound(event):
         if message_id and not state_store.mark_processed(message_id):
             print(f"[handler] duplicate delivery of {message_id}, skipping")
             continue
+        # Abuse brakes: AI processing is the only per-message cost, so a
+        # flooding number (or a flood from many numbers) is cut off BEFORE the
+        # model is called. One polite notice at the threshold, then silence;
+        # always ACK 200 so Meta does not redeliver the flood.
+        if _over_rate_limit(wa_id, message_id):
+            continue
         try:
             agent.handle_inbound(wa_id, username, message)
             if message_id:
@@ -158,6 +169,44 @@ def _handle_whatsapp_inbound(event):
     # A 5xx asks Meta to redeliver. Successfully completed message IDs remain
     # deduplicated, while failed claims were released above.
     return _resp(500 if failed else 200, "retry" if failed else "ok")
+
+
+def _over_rate_limit(wa_id, message_id):
+    """True when this message must be dropped by the abuse brakes.
+
+    Fails open: if the counters themselves error, the message is processed --
+    a broken brake must not silence real students.
+    """
+    try:
+        user_count = state_store.bump_rate(wa_id)
+        day_count = state_store.bump_ai_budget()
+    except Exception as e:  # noqa: BLE001
+        print(f"[handler] rate accounting failed: {type(e).__name__}")
+        return False
+    over_user = user_count > state_store.RATE_LIMIT_PER_HOUR
+    over_day = day_count > state_store.DAILY_AI_BUDGET
+    if not (over_user or over_day):
+        return False
+    print(f"[handler] rate-limited *{wa_id[-4:]}: user={user_count}/"
+          f"{state_store.RATE_LIMIT_PER_HOUR} day={day_count}/"
+          f"{state_store.DAILY_AI_BUDGET}")
+    first_over = (user_count == state_store.RATE_LIMIT_PER_HOUR + 1
+                  or day_count == state_store.DAILY_AI_BUDGET + 1)
+    if first_over:
+        try:
+            whatsapp_client.send_text(
+                wa_id,
+                "You have sent quite a few messages in a short time, so I am "
+                "pausing for a bit. Please try again in an hour -- your "
+                "earlier messages and any open ticket are safe.",
+            )
+        except Exception:  # noqa: BLE001 - the notice is best-effort
+            pass
+    if message_id:
+        # Complete the claim: a rate-limited message is handled, not failed,
+        # so Meta must not redeliver it.
+        state_store.complete_processed(message_id)
+    return True
 
 
 def _signature_ok(event, raw_body):

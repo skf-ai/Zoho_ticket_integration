@@ -244,6 +244,14 @@ class FakeZoho:
             print(f"{C_SYS}   [zoho] note on #{ticket_id}: {content[:70]}...{C_OFF}")
         return True
 
+    def reopen_ticket(self, ticket_id):
+        t = self.tickets.get(str(ticket_id))
+        if not t:
+            return False
+        t["status"] = "Open"
+        print(f"{C_SYS}   [zoho] ticket #{ticket_id} set back to Open{C_OFF}")
+        return True
+
 
 ZOHO = FakeZoho()
 
@@ -351,7 +359,7 @@ def install_fakes(mock_llm):
         setattr(ss, name, getattr(STORE, name))
 
     for name in ("find_or_create_contact", "create_ticket",
-                 "close_ticket", "add_comment"):
+                 "close_ticket", "add_comment", "reopen_ticket"):
         setattr(zc, name, getattr(ZOHO, name))
 
     whatsapp_client.send_text = fake_send_text

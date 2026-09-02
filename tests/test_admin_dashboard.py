@@ -77,6 +77,24 @@ def test_render_masks_numbers_and_shows_states():
     assert "overdue" in html_page
 
 
+def test_render_zoho_archive_section():
+    metrics = admin_dashboard.aggregate(_items(), now=NOW)
+    archive = [
+        {"number": "107", "subject": "[URGENT] Cannot log in", "status": "Closed",
+         "category": "login", "created": "2026-08-27"},
+        {"number": "110", "subject": "Grades missing", "status": "Open",
+         "category": "grades", "created": "2026-09-02"},
+    ]
+    page = admin_dashboard.render(metrics, None, archive)
+    assert "#107" in page and "Grades missing" in page
+    assert "full Zoho Desk archive" in page
+    # archive categories drive the Reports category bars
+    assert "grades" in page
+
+    unreachable = admin_dashboard.render(metrics, None, None)
+    assert "archive unreachable" in unreachable
+
+
 def _event(key):
     qs = {"key": key} if key is not None else None
     return {"requestContext": {"http": {"method": "GET", "path": "/admin"}},
@@ -96,10 +114,11 @@ def test_admin_route_404_on_wrong_key(mock_get):
     assert handler.lambda_handler(_event(None), None)["statusCode"] == 404
 
 
+@patch("src.zoho_client.list_tickets", return_value=[])
 @patch("src.billing.fetch_all", return_value=None)
 @patch("src.handler.state_store.scan_conversations", return_value=[])
 @patch("src.handler.config.get")
-def test_admin_route_serves_html_on_correct_key(mock_get, _scan, _billing):
+def test_admin_route_serves_html_on_correct_key(mock_get, _scan, _billing, _zoho):
     mock_get.return_value = "correct-key"
     resp = handler.lambda_handler(_event("correct-key"), None)
     assert resp["statusCode"] == 200

@@ -93,6 +93,13 @@ auto-expire in 90 days (or ignore them; they are obviously named).
 Keep sizes ≤ 50: each AI-processed message costs ~₹0.20, and OpenAI rate
 limits are shared with real students.
 
+**4e — spam brake** (~₹6): `py -3.12 loadtest.py --url <URL> --burst 35 --to 919000007777`
+sends 35 messages from ONE fake number. Expected: ~30 slow responses (AI
+processed, ~5–8s), then fast ones (~0.5s — brake engaged, no AI). CloudWatch
+shows `[handler] rate-limited *7777` lines and one polite pause notice sent.
+Brakes: `RATE_LIMIT_PER_HOUR` (default 30/number) and `DAILY_AI_BUDGET`
+(default 500 AI calls/day ≈ ₹85/day absolute ceiling) — both env-tunable.
+
 ---
 
 ## Phase 5 — deferred until WABA payment exists (15 min, ~₹1)
@@ -133,5 +140,10 @@ The product is production-ready when every box is ticked:
 - [ ] `/admin` reachable only with the key; 404 without
 - [ ] Secrets: no credential anywhere in git or docs; exposed ones rotated
 - [ ] Rollback rehearsed on paper: redeploy previous commit via Actions
+- [ ] **Lambda concurrency quota raised** — the 2026-09-02 load test found the
+      account limit at 10 concurrent executions (requests above it get
+      throttled; Meta retries, so messages are delayed, not lost). Before full
+      circulation: AWS Console → Service Quotas → AWS Lambda → Concurrent
+      executions → request 1,000.
 - [ ] Deferred and known: Phase 5 sweeper delivery (needs WABA payment),
       business verification (needs documents)
