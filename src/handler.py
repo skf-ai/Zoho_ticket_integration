@@ -59,16 +59,48 @@ def lambda_handler(event, context):
 
 # --- GET: admin dashboard ------------------------------------------------------
 
+def _match_admin_key(supplied):
+    """Which role (if any) this ?key= belongs to. "owner" = the original
+    full-access admin_dashboard_key; a name in config.ADMIN_ROLES = that
+    person's own key; None = no match. Every configured value is checked
+    (never short-circuited on the first compare) so key presence alone can't
+    be timed against a specific role."""
+    if not supplied:
+        return None
+    owner_key = config.get("admin_dashboard_key")
+    matched = "owner" if owner_key and hmac.compare_digest(supplied, owner_key) else None
+    for role, secret_name in config.ADMIN_ROLES.items():
+        role_key = config.get(secret_name)
+        if role_key and hmac.compare_digest(supplied, role_key):
+            matched = matched or role
+    return matched
+
+
 def _admin_dashboard(event):
-    """Protected HTML dashboard. Requires ?key= to match admin_dashboard_key in
-    Secrets Manager; when the key is unset or wrong we answer 404 (not 401) so
-    the page's existence is not advertised."""
+    """Protected HTML dashboard. Requires ?key= to match admin_dashboard_key
+    (full access) or one of config.ADMIN_ROLES' per-person keys in Secrets
+    Manager; no match answers 404 (not 401) so the page's existence is not
+    advertised."""
     from . import admin_dashboard, billing, zoho_client  # off the hot paths
 
-    configured = config.get("admin_dashboard_key")
     supplied = (event.get("queryStringParameters") or {}).get("key", "")
-    if not configured or not hmac.compare_digest(supplied, configured):
+    role = _match_admin_key(supplied)
+    if not role:
         return _resp(404, "Not found")
+
+    if role == "archana":
+        # Her task is a single glance, not the full operational dashboard --
+        # skip the billing/Zoho-archive calls entirely for her view.
+        metrics = admin_dashboard.aggregate(state_store.scan_conversations())
+        return {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "text/html; charset=utf-8",
+                "Cache-Control": "no-store",
+                "X-Robots-Tag": "noindex",
+            },
+            "body": admin_dashboard.render_overdue_only(metrics),
+        }
 
     metrics = admin_dashboard.aggregate(state_store.scan_conversations())
     try:

@@ -49,6 +49,8 @@ _SECRET_KEYS = (
     "llm_api_key",
     "lms_admin_wa_id",
     # Optional: enables GET /admin when set; the dashboard stays 404 without it.
+    # This is the original shared/full-access key (kept for backward
+    # compatibility); admin_dashboard_keys below adds distinct per-person keys.
     "admin_dashboard_key",
     # Optional: live billing on the admin dashboard. The WABA id lets us read
     # Meta's real conversation charges; the OpenAI ADMIN key (org-level, not a
@@ -56,7 +58,22 @@ _SECRET_KEYS = (
     # clearly-badged estimates.
     "whatsapp_waba_id",
     "openai_admin_key",
+    # Optional: distinct, revocable admin-panel links per person, each
+    # getting a role-appropriate view (admin_dashboard.render()). Not real
+    # authentication (no passwords/sessions) -- a stopgap until Cognito-style
+    # login exists. Unset ones simply grant no access for that person.
+    "admin_key_kalyani",
+    "admin_key_naidu",
+    "admin_key_archana",
 )
+
+# Role name -> its Secrets Manager field. Kept in one place so handler.py and
+# admin_dashboard.py agree on the set of named roles.
+ADMIN_ROLES = {
+    "kalyani": "admin_key_kalyani",
+    "naidu": "admin_key_naidu",
+    "archana": "admin_key_archana",
+}
 
 
 @functools.lru_cache(maxsize=1)

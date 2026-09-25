@@ -160,6 +160,52 @@ def _bars(counts):
     return "".join(rows)
 
 
+def render_overdue_only(metrics):
+    """Archana's view: one number, one instruction, nothing else.
+
+    Her job is a daily glance, not operating the dashboard -- no billing, no
+    tickets, no jargon. If the number is 0 there is nothing to do; if not,
+    the page tells her the one message to send and to whom.
+    """
+    overdue = metrics["overdue"]
+    ok = overdue == 0
+    color = "#1B8A50" if ok else "#B4442C"
+    bg = "#EAF5EE" if ok else "#FBEBE7"
+    big = "0" if ok else str(overdue)
+    headline = "All clear" if ok else "Something needs attention"
+    instruction = (
+        "Nothing to do today."
+        if ok else
+        "Please send this message to Naidu ji or Kalyani madam:<br>"
+        "<i>“Admin panel shows an overdue ticket, please check.”</i>"
+    )
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Support Line — Daily Check</title>
+<style>
+  body {{ margin:0; background:#F7F6F2; color:#26221C; font-family:"Segoe UI",system-ui,sans-serif;
+         display:flex; align-items:center; justify-content:center; min-height:100vh; padding:24px; }}
+  .card {{ background:#fff; border:1.5px solid #E3E0D9; border-radius:20px; padding:40px 32px;
+          max-width:480px; width:100%; text-align:center; box-shadow:0 10px 30px rgba(38,34,28,.10); }}
+  .num {{ font-size:6rem; font-weight:700; color:{color}; background:{bg}; border-radius:20px;
+         padding:24px; margin-bottom:20px; font-variant-numeric:tabular-nums; }}
+  h1 {{ font-size:1.3rem; margin:0 0 14px; color:{color}; }}
+  p {{ font-size:1.05rem; line-height:1.6; color:#4B4438; margin:0; }}
+  .label {{ font-size:.8rem; color:#6B6459; margin-top:-14px; margin-bottom:24px; }}
+  .refresh {{ margin-top:26px; padding:12px 20px; background:#26221C; color:#fff; border:none;
+             border-radius:10px; font-size:1rem; cursor:pointer; }}
+</style></head><body>
+  <div class="card">
+    <div class="num">{big}</div>
+    <div class="label">tickets overdue right now</div>
+    <h1>{headline}</h1>
+    <p>{instruction}</p>
+    <button class="refresh" onclick="location.reload()">Check again</button>
+  </div>
+</body></html>"""
+
+
 def render(metrics, billing=None, zoho_tickets=None):
     """Return the full dashboard HTML (overview + reports views).
 
