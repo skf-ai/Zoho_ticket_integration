@@ -14,8 +14,23 @@
    Resolved"** (custom function `NotifyBotOnResolved`, header
    `X-Webhook-Secret` = `zoho_webhook_secret`). If verification prompts stop
    arriving, check that this rule is still enabled and the secret matches.
-4. New-ticket email notifications are enabled under Setup → Notification
-   Rules (department: new ticket creation).
+4. New-ticket email is a custom function (`NotifyMeOnNewTicket`, on ticket
+   Create), not the built-in "notify all department agents" rule — that rule
+   is deliberately **off**. It broadcasts to every agent in the department,
+   which leaked notifications to people who shouldn't get them the moment a
+   second, unrelated project shared this same department. If new-ticket
+   email ever needs to reach more than one person, add recipients inside the
+   custom function's `sendmail`, never re-enable the built-in broadcast rule.
+5. **The department's ticket Blueprint must route "Resolve" to the `Resolved`
+   status, not straight to `Closed`.** Found live on 2026-09-25: the default
+   Blueprint's "Resolve" button skipped Resolved entirely, so the normal
+   click path any agent uses would have bypassed the whole student-
+   confirmation loop silently — no error, ticket just closes with nobody
+   ever asked. Verify: Setup → Automation → Blueprint → the department's
+   blueprint → the "Resolve" transition's arrow must end at a `Resolved` box,
+   not a `Closed` box. If a new department or a new Blueprint is ever
+   created for this ticketing line, this must be re-checked and re-fixed —
+   it is not something Zoho gets right by default.
 
 ## Deployment model
 
