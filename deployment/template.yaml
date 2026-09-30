@@ -35,6 +35,7 @@ Globals:
       Variables:
         SECRET_NAME: !Ref SecretName
         STATE_TABLE: !Ref ConversationStateTable
+        MEDIA_BUCKET: !Ref MediaBucket
         GRAPH_API_VERSION: v21.0
         # Must fit inside the webhook Lambda's timeout (below) even for a worst
         # case of two model calls plus a tool call plus the fallback reply.
@@ -44,6 +45,31 @@ Globals:
         LLM_MAX_RETRIES: '0'
 
 Resources:
+  # Permanent (90-day) conversation archive: full chat text plus student
+  # screenshots, for audit/reporting -- separate from ConversationStateTable,
+  # which trims history to the last 20 messages to bound LLM cost. The
+  # lifecycle rule is the retention policy; nothing in the code needs to track
+  # or enforce it.
+  MediaBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAfter90Days
+            Status: Enabled
+            ExpirationInDays: 90
+
   ConversationStateTable:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Retain
@@ -100,6 +126,8 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ConversationStateTable
+        - S3CrudPolicy:
+            BucketName: !Ref MediaBucket
         - AWSSecretsManagerGetSecretValuePolicy:
             SecretArn: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretName}-*
         # Admin dashboard: read the real month-to-date bill. Cost Explorer has
@@ -147,6 +175,8 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ConversationStateTable
+        - S3CrudPolicy:
+            BucketName: !Ref MediaBucket
         - AWSSecretsManagerGetSecretValuePolicy:
             SecretArn: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretName}-*
       Events:
@@ -306,3 +336,6 @@ Outputs:
   StateTable:
     Description: DynamoDB table used by the production agentic workflow.
     Value: !Ref ConversationStateTable
+  MediaBucket:
+    Description: S3 bucket holding the 90-day conversation/screenshot archive.
+    Value: !Ref MediaBucket

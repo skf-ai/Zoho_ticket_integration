@@ -4,6 +4,7 @@ Credentials come from src/config.py (Secrets Manager in AWS, env vars locally).
 """
 
 import html
+import re
 import requests
 import time
 
@@ -11,6 +12,29 @@ from . import config
 
 _access_token = None
 _access_token_expires_at = 0.0
+
+# Fields the admin needs to act, in a request -- bolded in the rendered ticket
+# so they stand out from the surrounding prose rather than blending into it.
+_HIGHLIGHT_LABELS = (
+    "Registered email", "Old email", "New email", "Department",
+    "Course name", "Student",
+)
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
+
+def _format_description(description):
+    """Escape, linkify emails, bold the fields the admin needs most, and turn
+    real line breaks into <br> -- Zoho renders the description as HTML, so a
+    plain "\\n" collapses into one unreadable paragraph otherwise.
+
+    Bolding/linking is done here in code, not left to the model, so the
+    formatting is reliable regardless of exact wording variations.
+    """
+    text = html.escape(description)
+    text = _EMAIL_RE.sub(lambda m: f'<a href="mailto:{m.group(0)}">{m.group(0)}</a>', text)
+    for label in _HIGHLIGHT_LABELS:
+        text = re.sub(rf"(?m)^{re.escape(label)}:", f"<b>{label}:</b>", text)
+    return text.replace("\n", "<br>")
 
 
 def get_access_token():
@@ -98,12 +122,9 @@ def create_ticket(subject, description, contact_id, category=None):
         print("Could not create ticket: access token missing.")
         return None
 
-    # Zoho renders the description as HTML, where plain "\n" collapses into one
-    # paragraph. Escape the text, then make line breaks real so the agent's
-    # labelled lines stay readable for the admin.
     data = {
         "subject": subject,
-        "description": html.escape(description).replace("\n", "<br>"),
+        "description": _format_description(description),
         "contactId": contact_id,
         "departmentId": config.require("zoho_department_id"),
     }
@@ -201,6 +222,32 @@ def reopen_ticket(ticket_id):
         print(f"Error reopening ticket {ticket_id} ({resp.status_code}): {resp.text}")
         return False
     print(f"Ticket {ticket_id} set back to Open.")
+    return True
+
+
+def add_attachment(ticket_id, filename, content, content_type=None):
+    """Upload a file (e.g. a student's WhatsApp screenshot) onto a ticket.
+
+    Multipart upload, so no `Content-Type: application/json` header here --
+    `requests` sets the correct multipart boundary itself from `files=`.
+    """
+    access_token = get_access_token()
+    if not access_token:
+        return False
+    headers = {
+        "Authorization": f"Zoho-oauthtoken {access_token}",
+        "orgId": config.require("zoho_org_id"),
+    }
+    files = {"file": (filename, content, content_type or "application/octet-stream")}
+    resp = requests.post(
+        f"{config.ZOHO_API_BASE}/tickets/{ticket_id}/attachments",
+        headers=headers,
+        files=files,
+        timeout=30,
+    )
+    if resp.status_code not in (200, 201):
+        print(f"Error attaching file to {ticket_id} ({resp.status_code}): {resp.text[:200]}")
+        return False
     return True
 
 

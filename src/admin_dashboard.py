@@ -303,9 +303,12 @@ def render(metrics, billing=None, zoho_tickets=None):
            --orange:#C0670F; --blue:#2F5FBE; --red:#B4442C; --paper:#F7F6F2;
            --side:#26221C; --card:#FFFFFF; }}
   * {{ box-sizing:border-box; }}
-  html, body {{ height:100%; }}
-  body {{ margin:0; background:var(--paper); color:var(--ink);
-         font-family:"Segoe UI",system-ui,sans-serif; font-size:15px; display:flex; }}
+  /* rem units below all scale off THIS root size, not body's -- raising it
+     is what actually makes every number/label on the page bigger, not just
+     plain body text. */
+  html {{ height:100%; font-size:18px; }}
+  body {{ height:100%; margin:0; background:var(--paper); color:var(--ink);
+         font-family:"Segoe UI",system-ui,sans-serif; font-size:1rem; display:flex; }}
   [hidden] {{ display:none !important; }}
 
   aside {{ flex:0 0 190px; background:var(--side); color:#EDEAE4; display:flex;

@@ -25,6 +25,13 @@ AWS_REGION = os.environ.get("AWS_REGION", "ap-south-1")
 # DynamoDB table holding per-user conversation state.
 STATE_TABLE = os.environ.get("STATE_TABLE", "whatsapp_conversation_state")
 
+# S3 bucket for the permanent (90-day) conversation archive and inbound images --
+# separate from the working conversation state above, which trims to the last
+# 20 messages for LLM cost. Empty until the stack is redeployed with the bucket
+# added; every media_store call is a no-op until then, so old deployments are
+# unaffected.
+MEDIA_BUCKET = os.environ.get("MEDIA_BUCKET", "")
+
 # Zoho .in data-center endpoints.
 ZOHO_TOKEN_URL = "https://accounts.zoho.in/oauth/v2/token"
 ZOHO_API_BASE = "https://desk.zoho.in/api/v1"

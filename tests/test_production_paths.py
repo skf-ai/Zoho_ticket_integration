@@ -127,3 +127,29 @@ def test_ticket_reservation_released_when_zoho_is_unreachable():
     ):
         tools._raise_ticket(args, ctx)
     release.assert_called_once_with("9199")
+
+
+def test_raise_ticket_flushes_pending_attachments():
+    ctx = {"wa_id": "9199", "username": "Student",
+           "state": {"ticket_status": "none"}}
+    args = {"subject": "Payment issue", "description": "Payment failed",
+            "category": "other"}
+    with (
+        patch("src.tools.state_store.reserve_ticket_creation", return_value=True),
+        patch("src.tools.zoho_client.find_or_create_contact", return_value="c1"),
+        patch("src.tools.zoho_client.create_ticket",
+              return_value={"id": "998877", "ticketNumber": "42"}),
+        patch("src.tools.state_store.open_ticket"),
+        patch("src.tools.state_store.pop_pending_attachments",
+              return_value=[{"s3_key": "conversations/9199/1-img.jpg",
+                             "filename": "whatsapp-img.jpg",
+                             "content_type": "image/jpeg"}]),
+        patch("src.tools.media_store.fetch",
+              return_value=(b"fake-bytes", "image/jpeg")),
+        patch("src.tools.zoho_client.add_attachment", return_value=True) as attach,
+    ):
+        result = tools._raise_ticket(args, ctx)
+    assert "42" in result
+    attach.assert_called_once_with(
+        "998877", "whatsapp-img.jpg", b"fake-bytes", "image/jpeg"
+    )

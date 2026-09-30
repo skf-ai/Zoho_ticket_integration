@@ -20,7 +20,7 @@ depend on the model at all, so tickets already open keep being chased even
 during a full LLM outage.
 """
 
-from . import knowledge, llm, state_store, tools, whatsapp_client
+from . import knowledge, llm, media_store, state_store, tools, whatsapp_client, zoho_client
 
 MAX_ITERATIONS = 4
 
@@ -35,13 +35,30 @@ FALLBACK_REPLY = (
 def handle_inbound(wa_id, username, message):
     """Handle one normalized inbound message. Returns the reply text sent."""
     text = (message.get("text") or "").strip()
-    if not text:
-        # Media, location, reactions and similar. Acknowledge rather than ignore.
-        sent = whatsapp_client.send_text(
-            wa_id,
-            "Sorry, I can only read text messages. Please describe your problem "
-            "in a message and I'll help.",
-        )
+    _archive_inbound(wa_id, message)
+
+    if message.get("type") == "image":
+        # Downloaded, archived, and attached to the ticket regardless of whether
+        # a caption came with it -- the model still cannot see the image itself,
+        # but the admin can, on the ticket.
+        _handle_image(wa_id, message)
+        if not text:
+            reply = ("Thanks for the screenshot! I've saved it with your ticket. "
+                     "Please also describe in a short text message what it shows "
+                     "(for example, the exact error text) so I can help.")
+            sent = whatsapp_client.send_text(wa_id, reply)
+            if not sent:
+                raise RuntimeError("WhatsApp did not accept the media guidance reply")
+            return None
+        # A caption was sent -- fall through and let the agent answer it like any
+        # other message.
+
+    elif not text:
+        # Other media, location, reactions and similar. Acknowledge rather than
+        # ignore.
+        reply = ("Sorry, I can only read text messages. Please describe your "
+                 "problem in a message and I'll help.")
+        sent = whatsapp_client.send_text(wa_id, reply)
         if not sent:
             raise RuntimeError("WhatsApp did not accept the media guidance reply")
         return None
@@ -68,6 +85,65 @@ def handle_inbound(wa_id, username, message):
             raise RuntimeError("WhatsApp did not accept the agent reply")
     state_store.append_history(wa_id, new_turns)
     return reply
+
+
+def _archive_inbound(wa_id, message):
+    """Best-effort write to the 90-day audit archive. Must never block a reply."""
+    try:
+        if message.get("type") == "image":
+            caption = message.get("text") or ""
+            media_store.log_text(wa_id, "in", f"[image] {caption}".strip(),
+                                  message_id=message.get("message_id"))
+        else:
+            body = message.get("text") or f"[{message.get('type', 'unknown')}]"
+            media_store.log_text(wa_id, "in", body,
+                                  message_id=message.get("message_id"))
+    except Exception as e:  # noqa: BLE001
+        print(f"[agent] archive failed for *{wa_id[-4:]}: {type(e).__name__}")
+
+
+def _handle_image(wa_id, message):
+    """Download the student's screenshot, archive it, and attach it to their
+    ticket -- immediately if one is already open, or held until raise_ticket
+    creates one otherwise. Never raises: a media hiccup must not cost the
+    student their reply.
+    """
+    media_id = message.get("id")
+    if not media_id:
+        return
+    try:
+        downloaded = whatsapp_client.download_media(media_id)
+    except Exception as e:  # noqa: BLE001
+        print(f"[agent] image download failed for *{wa_id[-4:]}: {type(e).__name__}")
+        return
+    if not downloaded:
+        return
+    content, content_type = downloaded
+    ext = (content_type or "image/jpeg").split("/")[-1].split(";")[0] or "jpg"
+    filename = f"whatsapp-{media_id}.{ext}"
+
+    s3_key = None
+    try:
+        s3_key = media_store.store_image(
+            wa_id, content, content_type,
+            message_id=message.get("message_id"), caption=message.get("text", ""),
+        )
+    except Exception as e:  # noqa: BLE001 - archiving must not block the attach
+        print(f"[agent] image archive failed for *{wa_id[-4:]}: {type(e).__name__}")
+
+    state = state_store.get_state(wa_id)
+    ticket_id = state.get("ticket_id")
+    if ticket_id and state.get("ticket_status") in ("open", "awaiting_verification"):
+        try:
+            zoho_client.add_attachment(ticket_id, filename, content, content_type)
+        except Exception as e:  # noqa: BLE001
+            print(f"[agent] attach to ticket {ticket_id} failed: {type(e).__name__}")
+    elif s3_key:
+        try:
+            state_store.add_pending_attachment(wa_id, s3_key, filename, content_type)
+        except Exception as e:  # noqa: BLE001
+            print(f"[agent] could not hold pending attachment for *{wa_id[-4:]}: "
+                  f"{type(e).__name__}")
 
 
 def _run_loop(history, turn, ctx):

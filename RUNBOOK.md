@@ -31,6 +31,20 @@
    not a `Closed` box. If a new department or a new Blueprint is ever
    created for this ticketing line, this must be re-checked and re-fixed —
    it is not something Zoho gets right by default.
+6. **Student screenshots are attached to the ticket automatically** (an image
+   sent on WhatsApp with no ticket open yet is held and attached once one is
+   raised). Look on the ticket's Attachments, not in the description. This
+   needs `MediaBucket` (added in `deployment/template.yaml`) to be deployed —
+   before that, images are archived but not attached.
+
+## Conversation archive
+
+Every message (student and bot) is written to the `MediaBucket` S3 bucket,
+under `conversations/<wa_id>/...`, and expires automatically after 90 days via
+the bucket's own lifecycle rule — this is separate from the DynamoDB
+conversation state, which only keeps the last 20 messages for the bot's own
+context. Use this bucket, not DynamoDB, for any audit/report request asking
+what a student actually said.
 
 ## Deployment model
 

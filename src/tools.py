@@ -24,7 +24,7 @@ message.
 
 import re
 
-from . import state_store, workdays, zoho_client
+from . import media_store, state_store, workdays, zoho_client
 
 SLA_WORKING_DAYS = 3
 
@@ -212,6 +212,10 @@ def _raise_ticket(args, ctx):
                 "it right now and ask them to message again shortly.")
 
     ticket_id = str(ticket["id"])
+    # Zoho's internal id (e.g. 146318000001840001) is what every API call
+    # needs; ticketNumber is the short, human one (e.g. "116") shown to
+    # students/admins instead -- falls back to the long id if absent.
+    ticket_number = str(ticket.get("ticketNumber") or ticket_id)
     now = workdays.now_utc()
     due = workdays.add_working_days(now, SLA_WORKING_DAYS)
 
@@ -221,16 +225,45 @@ def _raise_ticket(args, ctx):
         category=category,
         created_at=now,
         sla_due_at=due,
+        ticket_number=ticket_number,
     )
 
-    return (f"Ticket #{ticket_id} raised. It is due by {_friendly(workdays.iso(due))}. "
+    _flush_pending_attachments(wa_id, ticket_id)
+
+    return (f"Ticket #{ticket_number} raised. It is due by {_friendly(workdays.iso(due))}. "
             f"Tell the student it is raised and will be resolved within a maximum "
             f"of 3 working days.")
+
+
+def _flush_pending_attachments(wa_id, ticket_id):
+    """Attach any screenshots the student sent before this ticket existed.
+
+    Best-effort: a failed attach must not undo an already-created ticket.
+    """
+    try:
+        pending = state_store.pop_pending_attachments(wa_id)
+    except Exception as e:  # noqa: BLE001
+        print(f"[tools] could not read pending attachments for *{wa_id[-4:]}: "
+              f"{type(e).__name__}")
+        return
+    for att in pending:
+        try:
+            fetched = media_store.fetch(att.get("s3_key"))
+            if fetched:
+                content, _ct = fetched
+                zoho_client.add_attachment(
+                    ticket_id, att.get("filename") or "attachment",
+                    content, att.get("content_type"),
+                )
+        except Exception as e:  # noqa: BLE001
+            print(f"[tools] could not attach pending image to {ticket_id}: "
+                  f"{type(e).__name__}")
 
 
 def _check_ticket_status(ctx):
     state = ctx["state"]
     ticket_id = state.get("ticket_id")
+    ticket_number = state.get("ticket_number") or ticket_id
     status = state.get("ticket_status")
 
     if not ticket_id or status not in ("open", "awaiting_verification"):
@@ -239,19 +272,20 @@ def _check_ticket_status(ctx):
 
     due = _friendly(state.get("sla_due_at", ""))
     if status == "awaiting_verification":
-        return (f"Ticket #{ticket_id} has been marked resolved by the "
+        return (f"Ticket #{ticket_number} has been marked resolved by the "
                 f"administrator and is waiting for the student to confirm it is "
                 f"actually fixed. Ask them whether it is working now.")
 
     nudges = state.get("admin_nudges", 0)
     chased = "The administrator has been reminded." if nudges else ""
-    return (f"Ticket #{ticket_id} is open with the LMS administrator, due by "
+    return (f"Ticket #{ticket_number} is open with the LMS administrator, due by "
             f"{due}. {chased} Tell the student it is in progress.")
 
 
 def _confirm_resolution(args, ctx):
     state = ctx["state"]
     ticket_id = state.get("ticket_id")
+    ticket_number = state.get("ticket_number") or ticket_id
     status = state.get("ticket_status")
     note = (args.get("note") or "").strip()[:500]
 
@@ -276,7 +310,7 @@ def _confirm_resolution(args, ctx):
             return ("Could not close the ticket because the ticket system did not "
                     "respond. Thank the student anyway and tell them it is noted.")
         state_store.close_ticket(ctx["wa_id"], reason="student_confirmed")
-        return (f"Ticket #{ticket_id} closed. Thank the student warmly and let them "
+        return (f"Ticket #{ticket_number} closed. Thank the student warmly and let them "
                 f"know they can message again any time.")
 
     # The student says it is NOT fixed.
@@ -292,14 +326,14 @@ def _confirm_resolution(args, ctx):
             print(f"[tools] could not set ticket {ticket_id} back to Open: "
                   f"{type(e).__name__}")
         state_store.reopen_ticket(ctx["wa_id"], workdays.now_utc())
-        return (f"Ticket #{ticket_id} reopened and the administrator has been told "
+        return (f"Ticket #{ticket_number} reopened and the administrator has been told "
                 f"it is still not working. Tell the student it has gone back to the "
                 f"team, and ask for any extra detail that might help.")
 
     # Already open and still not fixed -> nothing to change; just record detail.
     if note:
         zoho_client.add_comment(ticket_id, f"Student added detail: {note}")
-    return (f"Ticket #{ticket_id} is already open with the team and being chased. "
+    return (f"Ticket #{ticket_number} is already open with the team and being chased. "
             f"Reassure the student it is in progress; do not say it is closed.")
 
 

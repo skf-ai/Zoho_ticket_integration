@@ -84,6 +84,10 @@ def run_once():
 def _perform(action, item, decision):
     wa_id = item["wa_id"]
     ticket_id = item.get("ticket_id")
+    # ticket_id is the long internal id every Zoho API call needs; ticket_number
+    # is the short one shown to admins/students in messages (falls back to the
+    # internal id for items written before this field existed).
+    ticket_number = item.get("ticket_number") or ticket_id
 
     if action == "nudge_admin":
         # Only count the nudge if the message actually left. Counting an unsent
@@ -108,7 +112,7 @@ def _perform(action, item, decision):
     elif action == "remind_student":
         sent = whatsapp_client.send_template(
             wa_id, TPL_STUDENT_REMIND,
-            components=_body_params([str(ticket_id)]),
+            components=_body_params([str(ticket_number)]),
         )
         if sent:
             state_store.record_student_reminder(
@@ -118,7 +122,7 @@ def _perform(action, item, decision):
             # "no, still broken" reply reopens rather than confusing the agent.
             state_store.append_history(wa_id, [{
                 "role": "assistant",
-                "content": (f"Following up on ticket #{ticket_id}: is your issue "
+                "content": (f"Following up on ticket #{ticket_number}: is your issue "
                             "working now? Please reply Yes or No."),
             }])
         else:
@@ -184,15 +188,16 @@ def _nudge_admin(item):
         return False
 
     ticket_id = str(item.get("ticket_id"))
+    ticket_number = str(item.get("ticket_number") or ticket_id)
     due = _friendly(item.get("sla_due_at"))
     nudge_no = int(item.get("admin_nudges", 0)) + 1
 
     sent = whatsapp_client.send_template(
         admin, TPL_ADMIN_NUDGE,
-        components=_body_params([ticket_id, item.get("category", "general"), due]),
+        components=_body_params([ticket_number, item.get("category", "general"), due]),
     )
     if sent:
-        print(f"[sweeper] nudge {nudge_no} sent to admin for ticket {ticket_id}")
+        print(f"[sweeper] nudge {nudge_no} sent to admin for ticket {ticket_number}")
     return bool(sent)
 
 
@@ -204,6 +209,7 @@ def _auto_close_admin(item):
     """
     wa_id = item["wa_id"]
     ticket_id = item.get("ticket_id")
+    ticket_number = item.get("ticket_number") or ticket_id
 
     commented = zoho_client.add_comment(
         ticket_id,
@@ -217,7 +223,7 @@ def _auto_close_admin(item):
         raise RuntimeError(f"Zoho did not close ticket {ticket_id}")
 
     sent = whatsapp_client.send_template(
-        wa_id, TPL_STUDENT_CLOSED, components=_body_params([str(ticket_id)]),
+        wa_id, TPL_STUDENT_CLOSED, components=_body_params([str(ticket_number)]),
     )
     if not sent:
         raise RuntimeError(f"could not notify student that ticket {ticket_id} closed")
@@ -228,6 +234,7 @@ def _auto_close_student(item):
     """Student never confirmed. Close as assumed resolved."""
     wa_id = item["wa_id"]
     ticket_id = item.get("ticket_id")
+    ticket_number = item.get("ticket_number") or ticket_id
 
     commented = zoho_client.add_comment(
         ticket_id,
@@ -240,7 +247,7 @@ def _auto_close_student(item):
         raise RuntimeError(f"Zoho did not close ticket {ticket_id}")
 
     sent = whatsapp_client.send_template(
-        wa_id, TPL_STUDENT_CLOSED, components=_body_params([str(ticket_id)]),
+        wa_id, TPL_STUDENT_CLOSED, components=_body_params([str(ticket_number)]),
     )
     if not sent:
         raise RuntimeError(f"could not notify student that ticket {ticket_id} closed")

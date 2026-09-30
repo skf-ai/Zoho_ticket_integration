@@ -20,5 +20,7 @@ email address they expected the credentials at.
 
 ## Student registered with the wrong email or phone number
 
-This always needs the LMS admin. Raise a ticket and include both the incorrect
-detail on file and the correct one the student is giving you.
+This always needs the LMS admin. **Before raising the ticket, ask for both:**
+(a) the **old/current email** believed to be on file, and (b) the **new/
+correct email** to update it to. Include both clearly labelled in the ticket —
+the admin cannot act on this without both values.

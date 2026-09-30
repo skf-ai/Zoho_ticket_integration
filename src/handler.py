@@ -312,6 +312,11 @@ def _normalize_message(msg):
         return {**base, "type": "button",
                 "text": b.get("text", ""), "id": b.get("payload")}
 
+    if mtype == "image":
+        img = msg.get("image", {})
+        return {**base, "type": "image", "text": img.get("caption", ""),
+                "id": img.get("id"), "mime_type": img.get("mime_type", "")}
+
     return {**base, "type": mtype or "unknown", "text": "", "id": None}
 
 

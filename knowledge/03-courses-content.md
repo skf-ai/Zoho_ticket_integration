@@ -5,8 +5,9 @@
 1. Enrolment may still be pending approval. Ask the student to log out, wait a
    few minutes, and log back in.
 2. Check they are looking at the right place — courses appear under **My
-   courses** on the dashboard, and completed or hidden courses may be filtered
-   out of the default view.
+   courses** on the dashboard. **Make sure the course status filter is set to
+   "All" (not "In progress" or another single filter)** — the default view
+   commonly hides completed, future, or hidden courses.
 3. Some courses only open on a scheduled start date.
 
 If the student was told they are enrolled and the course still does not appear

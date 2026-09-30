@@ -1,6 +1,6 @@
 # Meta / WhatsApp Business Platform setup — go-live guide
 
-**Updated:** 2026-08-24
+**Updated:** 2026-09-30
 
 ## Progress record
 
@@ -11,12 +11,12 @@
 | 2 — Phone Number ID in Secrets Manager | ✅ 2026-08-20 |
 | 3 — Permanent token (via Meta guided setup "Generate token"; no manual System User needed) | ✅ 2026-08-20 (rotated once after a screenshot exposure) |
 | 4 — App secret + fresh verify token | ✅ 2026-08-21 (⚠️ Meta webhook config still holds the old verify token until the post-deploy repoint) |
-| 5 — Billing on the WABA | ⏳ awaiting finance approval |
+| 5 — Billing on the WABA | ✅ 2026-09-30 — Visa •••1007 added to WABA `1714263309803387` |
 | 6 — Four templates submitted | ✅ approved 2026-08-21/24, plain English (`en`) |
 | 7 — Remaining secret keys | ✅ 2026-08-21 |
 | 8 — Deploy + wire webhook | ⏳ next milestone (OIDC provider exists; ticketing deploy role + `AWS_DEPLOY_ROLE_ARN` GitHub secret to confirm) |
-| 9 — Controlled live test | ⏳ after deploy + billing |
-| 10 — Business verification + circulate number | ⏳ awaiting org documents |
+| 9 — Controlled live test | ⏳ after deploy |
+| 10 — Business verification + circulate number | ⏳ submitted 2026-09-30, in review (~2 business days) |
 
 This is the complete, ordered checklist to take the system from "code done" to
 live on the real support number. Work top to bottom; each step tells you where
@@ -30,7 +30,7 @@ circulate it to students as the official support line.
 
 | Asset | Value |
 |---|---|
-| Meta WABA (WhatsApp Business Account) | `991209477079437` |
+| Meta WABA (WhatsApp Business Account) | `1714263309803387` (⚠️ superseded the earlier `991209477079437` referenced in older notes below — always check `whatsapp_waba_id` in Secrets Manager for the live value) |
 | Currently configured number | Meta's **test** number (`1121518577721735`) — to be replaced |
 | AWS Secrets Manager secret | `siddhanta/whatsapp-zoho`, region `ap-south-1` |
 
@@ -69,7 +69,7 @@ WhatsApp (or WhatsApp Business) app.
 AWS Console → Secrets Manager (`ap-south-1`) → `siddhanta/whatsapp-zoho`:
 
 - `whatsapp_phone_number_id` → the new Phone Number ID from Step 1.
-- `whatsapp_waba_id` stays `991209477079437`.
+- `whatsapp_waba_id` stays `1714263309803387` (confirm against the live value in Secrets Manager — see note above).
 
 (If the stack is already deployed when you change any secret, redeploy so
 Lambda containers pick up the new value — see `RUNBOOK.md` → Rotate credentials.)

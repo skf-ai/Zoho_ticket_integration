@@ -222,6 +222,39 @@ def _is_orphan_tool_result(message):
     return any(b.get("type") == "tool_result" for b in content)
 
 
+def add_pending_attachment(wa_id, s3_key, filename, content_type):
+    """Hold a screenshot's S3 key until this student's ticket is raised.
+
+    Images can arrive before the student has described their problem in text,
+    so there may be no ticket yet to attach to. tools._raise_ticket flushes
+    these once the ticket exists.
+    """
+    _t().update_item(
+        Key={"wa_id": wa_id},
+        UpdateExpression=(
+            "SET pending_attachments = list_append("
+            "if_not_exists(pending_attachments, :empty), :item)"
+        ),
+        ExpressionAttributeValues={
+            ":empty": [],
+            ":item": [{"s3_key": s3_key, "filename": filename,
+                       "content_type": content_type or ""}],
+        },
+    )
+
+
+def pop_pending_attachments(wa_id):
+    """Return and clear this student's held attachments."""
+    state = get_state(wa_id)
+    items = list(state.get("pending_attachments", []))
+    if items:
+        _t().update_item(
+            Key={"wa_id": wa_id},
+            UpdateExpression="REMOVE pending_attachments",
+        )
+    return items
+
+
 def clear_history(wa_id):
     """Drop conversation memory but keep ticket state. Used on '/reset'."""
     _t().update_item(
@@ -280,22 +313,29 @@ def release_ticket_creation(wa_id):
         ExpressionAttributeValues={":none": "none", ":creating": "creating"},
     )
 
-def open_ticket(wa_id, ticket_id, category, created_at, sla_due_at):
-    """Record a newly raised ticket and schedule the first admin nudge."""
+def open_ticket(wa_id, ticket_id, category, created_at, sla_due_at, ticket_number=None):
+    """Record a newly raised ticket and schedule the first admin nudge.
+
+    `ticket_number` is Zoho's short, human-facing number (e.g. "116") as
+    opposed to `ticket_id`, the long internal id the Zoho API requires for
+    every subsequent call. Messages shown to students/admins should use the
+    short number where available; API calls must keep using `ticket_id`.
+    """
     from . import sla  # imported here to avoid a circular import at module load
 
     first_nudge = sla.first_nudge_at(created_at)
     _t().update_item(
         Key={"wa_id": wa_id},
         UpdateExpression=(
-            "SET ticket_id = :tid, ticket_status = :st, category = :cat, "
-            "ticket_created_at = :created, sla_due_at = :due, "
+            "SET ticket_id = :tid, ticket_number = :tnum, ticket_status = :st, "
+            "category = :cat, ticket_created_at = :created, sla_due_at = :due, "
             "admin_nudges = :zero, due_bucket = :bucket, next_action_at = :next "
             "REMOVE ticket_creation_started_at"
         ),
         ConditionExpression="ticket_status = :creating",
         ExpressionAttributeValues={
             ":tid": str(ticket_id),
+            ":tnum": str(ticket_number) if ticket_number else str(ticket_id),
             ":st": "open",
             ":creating": "creating",
             ":cat": category,

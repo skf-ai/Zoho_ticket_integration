@@ -73,6 +73,18 @@ class TestPayloadParsing(unittest.TestCase):
         self.assertEqual(norm["id"], "login_issue")
         self.assertEqual(norm["type"], "button")
 
+    def test_extract_image_message(self):
+        msg = {
+            "type": "image",
+            "image": {"id": "media123", "mime_type": "image/jpeg",
+                      "caption": "payment error"},
+        }
+        norm = handler._normalize_message(msg)
+        self.assertEqual(norm["type"], "image")
+        self.assertEqual(norm["id"], "media123")
+        self.assertEqual(norm["text"], "payment error")
+        self.assertEqual(norm["mime_type"], "image/jpeg")
+
 
 if __name__ == "__main__":
     unittest.main()

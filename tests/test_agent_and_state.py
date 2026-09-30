@@ -22,6 +22,64 @@ def test_llm_outage_sends_deterministic_fallback_and_keeps_message():
     append.assert_called_once()
 
 
+def test_image_gets_screenshot_specific_reply():
+    message = {"type": "image", "text": "", "message_id": "m1", "id": "media123"}
+    with (
+        patch("src.agent.whatsapp_client.send_text", return_value=True) as send,
+        patch("src.agent.whatsapp_client.download_media", return_value=None),
+    ):
+        agent.handle_inbound("9199", "Student", message)
+    reply = send.call_args[0][1]
+    assert "screenshot" in reply.lower()
+    assert "describe" in reply.lower()
+
+
+def test_image_with_open_ticket_attaches_immediately():
+    message = {"type": "image", "text": "", "message_id": "m1", "id": "media123"}
+    with (
+        patch("src.agent.whatsapp_client.send_text", return_value=True),
+        patch("src.agent.whatsapp_client.download_media",
+              return_value=(b"fake-bytes", "image/jpeg")),
+        patch("src.agent.state_store.get_state",
+              return_value={"history": [], "ticket_status": "open",
+                             "ticket_id": "555"}),
+        patch("src.agent.media_store.store_image", return_value="conversations/9199/1-media123.jpg"),
+        patch("src.agent.zoho_client.add_attachment", return_value=True) as attach,
+        patch("src.agent.state_store.add_pending_attachment") as pending,
+    ):
+        agent.handle_inbound("9199", "Student", message)
+    attach.assert_called_once()
+    assert attach.call_args[0][0] == "555"
+    pending.assert_not_called()
+
+
+def test_image_with_no_ticket_holds_pending_attachment():
+    message = {"type": "image", "text": "", "message_id": "m1", "id": "media123"}
+    with (
+        patch("src.agent.whatsapp_client.send_text", return_value=True),
+        patch("src.agent.whatsapp_client.download_media",
+              return_value=(b"fake-bytes", "image/jpeg")),
+        patch("src.agent.state_store.get_state",
+              return_value={"history": [], "ticket_status": "none"}),
+        patch("src.agent.media_store.store_image", return_value="conversations/9199/1-media123.jpg"),
+        patch("src.agent.zoho_client.add_attachment") as attach,
+        patch("src.agent.state_store.add_pending_attachment") as pending,
+    ):
+        agent.handle_inbound("9199", "Student", message)
+    attach.assert_not_called()
+    pending.assert_called_once_with(
+        "9199", "conversations/9199/1-media123.jpg", "whatsapp-media123.jpeg", "image/jpeg"
+    )
+
+
+def test_other_media_gets_generic_text_only_reply():
+    message = {"type": "audio", "text": "", "message_id": "m1"}
+    with patch("src.agent.whatsapp_client.send_text", return_value=True) as send:
+        agent.handle_inbound("9199", "Student", message)
+    reply = send.call_args[0][1]
+    assert "only read text" in reply.lower()
+
+
 def test_failed_whatsapp_reply_raises_for_webhook_retry():
     message = {"type": "text", "text": "help", "message_id": "m1"}
     with (
