@@ -163,8 +163,8 @@ def _handle_whatsapp_inbound(event):
             ):
                 whatsapp_client.send_text(
                     wa_id,
-                    "Thanks for your message! Our support assistant is being set "
-                    "up right now. Please try again a little later.",
+                    "Thanks for your message! ⏳ Our support assistant is being "
+                    "set up right now. Please try again a little later.",
                 )
         except Exception:  # noqa: BLE001 - never fail on the not-ready path
             pass
@@ -228,9 +228,9 @@ def _over_rate_limit(wa_id, message_id):
         try:
             whatsapp_client.send_text(
                 wa_id,
-                "You have sent quite a few messages in a short time, so I am "
-                "pausing for a bit. Please try again in an hour -- your "
-                "earlier messages and any open ticket are safe.",
+                "You've sent quite a few messages in a short time, so I'm "
+                "pausing for a bit ⏳. Please try again in an hour -- your "
+                "earlier messages and any open ticket are *safe*.",
             )
         except Exception:  # noqa: BLE001 - the notice is best-effort
             pass

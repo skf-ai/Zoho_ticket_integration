@@ -26,9 +26,9 @@ MAX_ITERATIONS = 4
 
 # Sent when the model is unavailable. Deliberately plain and useful.
 FALLBACK_REPLY = (
-    "Sorry, our assistant is temporarily unavailable. Please reply with a short "
-    "description of your problem and try again shortly. If it is urgent, please "
-    "contact the support address provided by your institution."
+    "Sorry, our assistant is temporarily unavailable ⏳. Please reply with a "
+    "short description of your problem and try again shortly. If it's urgent, "
+    "please contact the support address provided by your institution."
 )
 
 
@@ -43,9 +43,9 @@ def handle_inbound(wa_id, username, message):
         # but the admin can, on the ticket.
         _handle_image(wa_id, message)
         if not text:
-            reply = ("Thanks for the screenshot! I've saved it with your ticket. "
-                     "Please also describe in a short text message what it shows "
-                     "(for example, the exact error text) so I can help.")
+            reply = ("Thanks for the screenshot! 📎 I've saved it with your "
+                     "ticket. Could you also *describe what it shows* in a short "
+                     "message (e.g. the exact error text) so I can help?")
             sent = whatsapp_client.send_text(wa_id, reply)
             if not sent:
                 raise RuntimeError("WhatsApp did not accept the media guidance reply")
@@ -56,8 +56,8 @@ def handle_inbound(wa_id, username, message):
     elif not text:
         # Other media, location, reactions and similar. Acknowledge rather than
         # ignore.
-        reply = ("Sorry, I can only read text messages. Please describe your "
-                 "problem in a message and I'll help.")
+        reply = ("Sorry, I can only read text messages right now. Please "
+                 "describe your problem in a message and I'll help 🙂")
         sent = whatsapp_client.send_text(wa_id, reply)
         if not sent:
             raise RuntimeError("WhatsApp did not accept the media guidance reply")
