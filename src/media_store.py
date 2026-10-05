@@ -17,16 +17,29 @@ simply dormant until the next deploy adds it.
 import time
 
 import boto3
+from botocore.config import Config
 
 from . import config
 
 _s3 = None
 
+# botocore >=1.36 defaults to adding a CRC32 trailer-checksum to every S3
+# upload (request_checksum_calculation="when_supported"). In this Lambda's
+# network path that trailer encoding raised a bare HTTPClientError on every
+# put_object call, silently dropping every student screenshot (caught by the
+# try/except in agent.py, so the bot kept working -- it just never archived
+# or attached anything). Forcing "when_required" restores the plain,
+# non-chunked upload that worked before botocore changed its default.
+_S3_CONFIG = Config(
+    request_checksum_calculation="when_required",
+    response_checksum_validation="when_required",
+)
+
 
 def _client():
     global _s3
     if _s3 is None:
-        _s3 = boto3.client("s3", region_name=config.AWS_REGION)
+        _s3 = boto3.client("s3", region_name=config.AWS_REGION, config=_S3_CONFIG)
     return _s3
 
 
