@@ -44,6 +44,22 @@ class TestZohoClient(unittest.TestCase):
 
         self.assertTrue(zoho_client.close_ticket("ticket123"))
 
+    def test_format_description_spaces_out_lines(self):
+        out = zoho_client._format_description(
+            "Problem: cannot log in\nError message: none shown\n\n---\nStudent: Rahul (919999999999)"
+        )
+        # Each line is its own margined block -- no bare "<br>" anywhere, and a
+        # blank source line still renders as a visible paragraph gap.
+        self.assertNotIn("<br>", out)
+        self.assertIn('<div style="margin:0 0 10px 0;">Problem: cannot log in</div>', out)
+        self.assertIn('<div style="margin:0 0 10px 0;"><b>Student:</b> Rahul (919999999999)</div>', out)
+        self.assertIn('<div style="margin:0 0 10px 0;">&nbsp;</div>', out)
+
+    def test_format_description_bolds_and_links(self):
+        out = zoho_client._format_description("Registered email: a@b.com")
+        self.assertIn("<b>Registered email:</b>", out)
+        self.assertIn('<a href="mailto:a@b.com">a@b.com</a>', out)
+
 
 if __name__ == "__main__":
     unittest.main()

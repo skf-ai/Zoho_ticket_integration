@@ -23,9 +23,10 @@ _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
 
 def _format_description(description):
-    """Escape, linkify emails, bold the fields the admin needs most, and turn
-    real line breaks into <br> -- Zoho renders the description as HTML, so a
-    plain "\\n" collapses into one unreadable paragraph otherwise.
+    """Escape, linkify emails, bold the fields the admin needs most, and give
+    every line real paragraph spacing -- Zoho renders the description as HTML,
+    so plain "\\n" collapses lines flush against each other with zero gap
+    otherwise (a single <br> adds no visual space at all).
 
     Bolding/linking is done here in code, not left to the model, so the
     formatting is reliable regardless of exact wording variations.
@@ -34,7 +35,13 @@ def _format_description(description):
     text = _EMAIL_RE.sub(lambda m: f'<a href="mailto:{m.group(0)}">{m.group(0)}</a>', text)
     for label in _HIGHLIGHT_LABELS:
         text = re.sub(rf"(?m)^{re.escape(label)}:", f"<b>{label}:</b>", text)
-    return text.replace("\n", "<br>")
+    # Each line becomes its own block with bottom margin, so labelled fields
+    # read as a clean list instead of a wall stuck together. A blank line
+    # (from "\n\n" in the source, e.g. between the description and the "---"
+    # footer) becomes its own empty, margined block too, which reads as a
+    # clear paragraph break rather than just a slightly bigger gap.
+    lines = text.split("\n")
+    return "".join(f'<div style="margin:0 0 10px 0;">{line or "&nbsp;"}</div>' for line in lines)
 
 
 def get_access_token():
