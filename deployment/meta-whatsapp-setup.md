@@ -1,6 +1,6 @@
 # Meta / WhatsApp Business Platform setup — go-live guide
 
-**Updated:** 2026-09-30
+**Updated:** 2026-10-07
 
 ## Progress record
 
@@ -10,13 +10,13 @@
 | 1 — Add number to WABA (OTP verified, then registered via guided setup; Phone Number ID `1181089108432432`) | ✅ 2026-08-20 — **Connected**, quality High |
 | 2 — Phone Number ID in Secrets Manager | ✅ 2026-08-20 |
 | 3 — Permanent token (via Meta guided setup "Generate token"; no manual System User needed) | ✅ 2026-08-20 (rotated once after a screenshot exposure) |
-| 4 — App secret + fresh verify token | ✅ 2026-08-21 (⚠️ Meta webhook config still holds the old verify token until the post-deploy repoint) |
+| 4 — App secret + fresh verify token | ✅ 2026-08-21 |
 | 5 — Billing on the WABA | ✅ 2026-09-30 — Visa •••1007 added to WABA `1714263309803387` |
 | 6 — Four templates submitted | ✅ approved 2026-08-21/24, plain English (`en`) |
 | 7 — Remaining secret keys | ✅ 2026-08-21 |
-| 8 — Deploy + wire webhook | ⏳ next milestone (OIDC provider exists; ticketing deploy role + `AWS_DEPLOY_ROLE_ARN` GitHub secret to confirm) |
-| 9 — Controlled live test | ⏳ after deploy |
-| 10 — Business verification + circulate number | ⏳ submitted 2026-09-30, in review (~2 business days) |
+| 8 — Deploy + wire webhook | ✅ 2026-09-30 — webhook pointed at `https://1msg3v5m48.execute-api.ap-south-1.amazonaws.com/Prod/whatsapp`, `/health` returns `ready: true` |
+| 9 — Controlled live test | ✅ 2026-10-05 — ticket raise/resolve/close cycle confirmed live (ticket #127) |
+| 10 — Business verification + circulate number | ✅ verified 2026-10-07 — **number not yet circulated to students**, see below |
 
 This is the complete, ordered checklist to take the system from "code done" to
 live on the real support number. Work top to bottom; each step tells you where

@@ -16,8 +16,8 @@ _access_token_expires_at = 0.0
 # Fields the admin needs to act, in a request -- bolded in the rendered ticket
 # so they stand out from the surrounding prose rather than blending into it.
 _HIGHLIGHT_LABELS = (
-    "Registered email", "Old email", "New email", "Department",
-    "Course name", "Student",
+    "Institution", "Registration ID", "Registered email", "Old email",
+    "New email", "Department", "Course name", "Student",
 )
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
