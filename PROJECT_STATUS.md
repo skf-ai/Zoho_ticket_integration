@@ -1,33 +1,29 @@
 # Project Status and Handoff
 
-**Updated:** 2026-09-28
+**Updated:** 2026-10-23
 
 ## Current stage
 
-**LIVE, FULLY TESTED, AND OPERATIONALLY HARDENED.** The WhatsApp support line
-(+91 89259 93784) has been answering real students since 2026-08-25. Every
-mechanism in the design — instant answers, escalation with pre-ticket intake,
-ticket creation, admin nudges, the resolve/confirm loop, reopen-on-"No", and
-SLA auto-close — has been proven working in production, including two
-findings from real production runs (a Zoho notification leak and a Blueprint
-gap) that were found and fixed, not just tested in the abstract.
+**PRODUCTION-READY. All 10 go-live steps complete, including Meta business
+verification.** The WhatsApp support line (+91 89259 93784) has been
+answering real students since 2026-08-25, and every account-side blocker
+(billing, business verification, webhook wiring, admin contact details) is
+now closed as of 2026-10-07.
 
 **What's genuinely still open, in order of what blocks wide circulation:**
 
-1. **Meta business verification** — documents not yet submitted as of the
-   last check (2026-09-23). Free; unblocks the 250/day business-initiated
-   message cap. Not urgent for a small first batch, required before an
-   all-students banner rollout.
-2. **Real people's contact details** — Naidu ji's WhatsApp number + email,
-   Kalyani's email — not yet provided, so `lms_admin_wa_id` still points at
-   Akash's own number and the three per-person admin panel keys
-   (`admin_key_kalyani`, `admin_key_naidu`, `admin_key_archana`) are not yet
-   set in Secrets Manager. Code and Zoho agent slots are ready; this is a
-   data-entry step once the details arrive.
+1. **AWS billing alarm + OpenAI spend limit not yet set.** `COSTS.md` says to
+   do this "on day one" — still outstanding as of this update. Five minutes
+   each: AWS Console → Billing → Budgets (monthly, $20); platform.openai.com
+   → Settings → Limits.
+2. **The number has not been circulated to all students yet.** Per the
+   project's own recommendation, start with one class/group, watch the admin
+   dashboard and Naidu ji's nudges for a few days, then expand — not an
+   all-students blast on day one.
 3. **Decide the first launch batch** (one class/group, not everyone at once).
 
 Everything else — code, infrastructure, Zoho configuration, admin tooling,
-documentation — is done.
+Meta/WABA setup, business verification, documentation — is done.
 
 ## What was proven in production this cycle (2026-09-01 → 2026-09-28)
 
@@ -84,6 +80,57 @@ documentation — is done.
 - **Ticket descriptions render as labelled lines** in Zoho (HTML line breaks,
   not one paragraph), verified readable.
 - Full regression suite: **85 automated tests, all passing.**
+
+## What shipped this cycle (2026-09-29 → 2026-10-23)
+
+- **Account-side go-live blockers closed:** WABA billing added (card on
+  `1714263309803387`), stack deployed, Meta webhook repointed at the live API
+  Gateway URL, **Meta business verification completed** (2026-10-07, after
+  one rejected attempt — resubmitted with a corrected legal name match), and
+  a full live ticket cycle (`#127`) confirmed end to end on the real number.
+- **Permanent 90-day conversation archive**, separate from the DynamoDB
+  working-memory table (which still trims to 20 messages for LLM cost): every
+  inbound/outbound message, text and image, is written to a new S3 bucket
+  (`MediaBucket`, 90-day lifecycle rule, `src/media_store.py`). Exists purely
+  for audit/reporting — the agent never reads from it.
+- **Student screenshots now attach to the Zoho ticket**, not just get
+  acknowledged: downloaded via the WhatsApp Media API, archived to S3, and
+  attached to the ticket immediately if one is already open, or held and
+  flushed onto the ticket the moment `raise_ticket` creates one
+  (`src/agent.py::_handle_image`, `src/tools.py::_flush_pending_attachments`).
+  **Found and fixed a real production bug** (2026-10-05/07): every upload was
+  silently failing with a bare `HTTPClientError` from a botocore >=1.36
+  default-on checksum-trailer behavior that broke in this Lambda's network
+  path; fixed by forcing `request_checksum_calculation="when_required"` on
+  the S3 client. Confirmed working live after the fix.
+- **Ticket description readability fixed:** every line now renders as its own
+  margined block instead of being jammed flush together; emails in the
+  description are clickable `mailto:` links; key fields (registered email,
+  department, course name, institution, registration ID) are bolded.
+- **Two new ticket fields:** institution/college name (strongly requested,
+  not a hard block — a stuck student is worse than one ticket gap) and
+  student registration/ID number (best-effort). Both bolded in the ticket.
+- **Short ticket numbers** (`ticketNumber`, e.g. "#127") shown to students and
+  admins everywhere, instead of Zoho's long internal id — the long id is kept
+  internally for every API call.
+- **Bot tone rewritten to sound human**, not like a form: contractions,
+  reacts to what the student said before moving on, light WhatsApp `*bold*`
+  and emoji where it genuinely helps — never a checklist unless it's
+  literally numbered steps.
+- **Knowledge base and intake flow updated** from real usage feedback:
+  Gmail-SSO-first login guidance (the ~90% path), course-status-filter tip
+  for "course not showing," old/new email capture for email-correction
+  requests.
+- **Admin panel font-size bug fixed** (root `<html>` size was never set, so
+  `rem`-based sizing had nothing to scale from).
+- **New-ticket notification email switched** off the old leaked address to
+  the real admin inbox (`siksha@srisiddhanta.org`), via the
+  `NotifyMeOnNewTicket` Deluge function.
+- `lms_admin_wa_id` updated to Naidu ji's real WhatsApp number
+  (confirmed set).
+- Full regression suite grew to **93 automated tests, all passing**, covering
+  every change above (image handling, pending-attachment flush, ticket
+  description formatting, webhook message normalization for images).
 
 ## Documentation and demo materials produced this cycle
 
@@ -147,7 +194,13 @@ The full click-by-click record is
 - EventBridge retry/dead-letter configuration; optional SNS operations alarms
   and 30-day log retention
 - Masked student identifiers in application logs
-- 90-day inactive conversation TTL (configurable)
+- 90-day inactive conversation TTL on the DynamoDB working-memory table
+  (configurable) -- separate from the permanent S3 conversation archive below
+- **Permanent 90-day S3 archive** of every message (text + images), for
+  audit/reporting -- never read by the agent itself
+- **Student screenshots attached to Zoho tickets** automatically (immediately
+  if a ticket is open, held and flushed onto one the moment it's raised)
+- Institution name and registration ID collected and bolded on every ticket
 - Admin panel with real per-service billing and per-person, role-appropriate
   views
 - Auto-deploy on every push to `main` (tests gate it; concurrency-guarded)
@@ -157,12 +210,14 @@ The full click-by-click record is
 
 ## Verified
 
-- `python -m pytest -q`: **85 passed**
+- `python -m pytest -q`: **93 passed**
 - Load/concurrency/duplicate-storm tests against the live deployed system: passed
 - Full lifecycle proven unattended over real elapsed days in production
   (not just the simulator)
 - Zoho Blueprint fixed and live-verified (ticket #116)
 - Notification routing fixed and verified (single recipient, correct link)
+- Live ticket cycle re-verified post-cycle (ticket #127, 2026-10-05):
+  raise → image attach (after the S3 checksum fix) → resolve → confirm → close
 
 ## History
 
@@ -180,6 +235,19 @@ The full click-by-click record is
 - 2026-09-24/25 — admin panel got per-person role-based views; Zoho
   notification broadcast leak found and fixed; Zoho Blueprint "Resolve"
   gap found and fixed, verified live end to end.
+- 2026-09-29/30 — WABA billing added on the correct account
+  (`1714263309803387`); knowledge base and intake flow updated from real
+  Naidu ji feedback; ticket description bolding/mailto-links added; short
+  ticket numbers threaded through every student/admin-facing message;
+  admin panel font-size bug fixed; new-ticket email switched off the leaked
+  address.
+- 2026-10-05/07 — permanent 90-day S3 conversation/image archive shipped;
+  image-attachment-to-ticket feature shipped, then found broken in
+  production (botocore checksum-trailer `HTTPClientError`) and fixed, then
+  re-verified live; ticket description spacing fixed; **Meta business
+  verification completed** after one rejected resubmission; `lms_admin_wa_id`
+  updated to Naidu ji's real number; bot tone rewritten to sound human;
+  institution name + registration ID added as ticket fields.
 
 ## Deliberately not done
 
@@ -188,5 +256,9 @@ The full click-by-click record is
   OpenAI admin key) was rotated/revoked the same session.
 - Real login (passwords/sessions) for the admin panel was deliberately not
   built here a second time — see the SKF Admin Console note above.
-- Meta business verification and the three real people's contact details are
-  the organisation's own remaining inputs, not engineering work.
+- Institution name is strongly requested on every ticket, not a hard block --
+  a student stuck unable to raise a ticket over one missing field is a worse
+  outcome than a ticket with "Institution: not provided" the admin can chase.
+- AWS billing alarm and OpenAI spend limit are organisation account actions,
+  not engineering work -- still outstanding, see "What's genuinely still
+  open" above.
