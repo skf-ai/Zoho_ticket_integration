@@ -16,11 +16,18 @@ Saturday 18:00 IST is therefore due Wednesday 18:00 IST (Sunday skipped) --
 never earlier than a full 3 working days later, which is what we promised.
 
 Editing the holiday list is deliberately a one-line change so non-engineers can
-maintain it; see HOLIDAYS.
+maintain it; see HOLIDAYS. It can also be overridden at runtime from the SKF
+Admin Console's config overlay (system="support", key="holidays_json", a JSON
+array of ISO dates) without a redeploy -- see config_overlay.py and
+_holidays() below. HOLIDAYS remains the fallback used whenever that override
+is unset.
 """
 
+import json
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
+
+from . import config_overlay
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -47,11 +54,25 @@ HOLIDAYS = {
 }
 
 
+def _holidays():
+    """The effective holiday set: the console's override if one is set and
+    parses as a JSON array of ISO dates, otherwise the bundled HOLIDAYS."""
+    raw = config_overlay.get("support", "holidays_json", default=None)
+    if raw:
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(parsed, list):
+                return set(parsed)
+        except (TypeError, ValueError):
+            pass
+    return HOLIDAYS
+
+
 def is_working_day(d):
     """True if `d` (a date, interpreted in IST) is a working day."""
     if d.weekday() in WEEKLY_OFF:
         return False
-    return d.isoformat() not in HOLIDAYS
+    return d.isoformat() not in _holidays()
 
 
 def to_ist(dt):

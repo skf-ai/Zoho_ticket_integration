@@ -23,6 +23,16 @@ Parameters:
     Type: String
     Default: ''
     Description: Optional operations email for Lambda and sweeper alarms.
+  SkfAdminConfigTable:
+    Type: String
+    Default: skf_admin_config_dev
+    # The SKF Admin Console's own DynamoDB table (a different stack, same
+    # account/region). Read-only (GetItem) from here - see config_overlay.py.
+    # Blank disables the overlay entirely: every config_overlay.get() call
+    # then returns its caller's default immediately, same as before this
+    # existed, so a misconfigured value here degrades gracefully rather than
+    # breaking anything.
+    Description: SKF Admin Console's config table - FAQ/knowledge/holidays/SLA overrides.
 
 Conditions:
   HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
@@ -43,6 +53,7 @@ Globals:
         # See the budget comment in src/llm.py.
         LLM_TIMEOUT_SECONDS: '8'
         LLM_MAX_RETRIES: '0'
+        SKF_ADMIN_CONFIG_TABLE: !Ref SkfAdminConfigTable
 
 Resources:
   # Permanent (90-day) conversation archive: full chat text plus student
@@ -137,6 +148,12 @@ Resources:
             - Effect: Allow
               Action: ce:GetCostAndUsage
               Resource: "*"
+        # Read-only access to the SKF Admin Console's own config table - see
+        # config_overlay.py and the SkfAdminConfigTable parameter above.
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${SkfAdminConfigTable}
       Events:
         WhatsappVerify:
           Type: Api
@@ -179,6 +196,12 @@ Resources:
             BucketName: !Ref MediaBucket
         - AWSSecretsManagerGetSecretValuePolicy:
             SecretArn: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretName}-*
+        # Read-only access to the SKF Admin Console's own config table - the
+        # sweeper evaluates sla.py/workdays.py, both overlay-aware now.
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${SkfAdminConfigTable}
       Events:
         HourlySweep:
           Type: Schedule

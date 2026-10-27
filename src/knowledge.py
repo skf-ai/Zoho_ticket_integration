@@ -14,10 +14,22 @@ The assembled text is cached per warm Lambda container and is deliberately
 stable byte-for-byte, because it forms the cacheable prefix of the prompt --
 see llm.py. Any per-request value interpolated in here would silently destroy
 that cache and multiply the running cost.
+
+An optional override can replace this entire assembled text at runtime, via
+the SKF Admin Console's config overlay (system="support", key="knowledge_text")
+-- see config_overlay.py. This does NOT reintroduce the per-request cache
+problem above: the override is either unset (nothing changes) or a stable
+string that only changes when an operator edits it from the console, so the
+prompt prefix is still byte-for-byte identical across requests between edits.
+The overlay module does its own short-TTL caching per container, so this is
+one extra read of an in-process cache on every load() call, not a DynamoDB
+call every time.
 """
 
 import functools
 from pathlib import Path
+
+from . import config_overlay
 
 # knowledge/ sits beside src/ at the repo root, and is packaged into the Lambda
 # bundle by deployment/build.sh.
@@ -26,12 +38,9 @@ PLACEHOLDERS = ("<LMS_URL>", "<SUPPORT_EMAIL>")
 
 
 @functools.lru_cache(maxsize=1)
-def load():
-    """Return the full knowledge base as one markdown string.
-
-    Files are concatenated in sorted filename order so the result is identical
-    on every container -- non-deterministic ordering would break prompt caching.
-    """
+def _load_from_files():
+    """The bundled knowledge base, read once per warm container. This is the
+    fallback used whenever the console's override is unset."""
     if not KNOWLEDGE_DIR.is_dir():
         print(f"[knowledge] directory not found: {KNOWLEDGE_DIR}")
         return ""
@@ -45,6 +54,18 @@ def load():
     if not parts:
         print(f"[knowledge] no .md files in {KNOWLEDGE_DIR}")
     return "\n\n---\n\n".join(parts)
+
+
+def load():
+    """Return the full knowledge base as one markdown string: the console's
+    override if one is set, otherwise the bundled files. Deliberately not
+    cached itself (unlike _load_from_files) -- config_overlay.get() already
+    caches for SKF_ADMIN_CONFIG_TTL_SECONDS (default 60s), which is how an
+    edit from the console takes effect without a redeploy."""
+    override = config_overlay.get("support", "knowledge_text", default=None)
+    if override:
+        return override
+    return _load_from_files()
 
 
 def topics():

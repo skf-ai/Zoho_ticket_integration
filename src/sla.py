@@ -28,13 +28,40 @@ is implemented as the two `auto_close_*` branches; nothing else closes a ticket
 except the student explicitly confirming.
 """
 
+import json
 from datetime import timedelta
 
-from . import workdays
+from . import config_overlay, workdays
 
+# Bundled defaults. Can be overridden at runtime from the SKF Admin Console's
+# config overlay (system="support", key="sla_json", a JSON object with any of
+# these three field names) without a redeploy -- see _sla_overrides() below.
 SLA_WORKING_DAYS = 3
 MAX_ADMIN_NUDGES = 2
 STUDENT_REMINDERS = 1
+
+
+def _sla_overrides() -> dict:
+    raw = config_overlay.get("support", "sla_json", default=None)
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+        return parsed if isinstance(parsed, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _sla_working_days() -> int:
+    return int(_sla_overrides().get("sla_working_days", SLA_WORKING_DAYS))
+
+
+def _max_admin_nudges() -> int:
+    return int(_sla_overrides().get("max_admin_nudges", MAX_ADMIN_NUDGES))
+
+
+def _student_reminders() -> int:
+    return int(_sla_overrides().get("student_reminders", STUDENT_REMINDERS))
 
 # How long a half-finished operation may sit before we treat it as abandoned.
 #
@@ -158,7 +185,7 @@ def _decide_open(state, now):
     # was given -- the accountability engine breaking the one promise it exists
     # to keep.
     deadline = _parse(state.get("sla_due_at")) or workdays.add_working_days(
-        created, SLA_WORKING_DAYS
+        created, _sla_working_days()
     )
 
     if now >= deadline:
@@ -171,7 +198,7 @@ def _decide_open(state, now):
     elapsed = workdays.working_days_between(created, now)
     nudges = int(state.get("admin_nudges", 0))
 
-    if nudges >= MAX_ADMIN_NUDGES:
+    if nudges >= _max_admin_nudges():
         # Already chased twice; wait out the remaining time, then auto-close.
         return {
             "action": "none",
@@ -182,7 +209,7 @@ def _decide_open(state, now):
     return {
         "action": "nudge_admin",
         "next_at": _at_nine(now),
-        "reason": f"nudge {nudges + 1} of {MAX_ADMIN_NUDGES}, "
+        "reason": f"nudge {nudges + 1} of {_max_admin_nudges()}, "
                   f"{elapsed} working days elapsed",
     }
 
@@ -204,7 +231,7 @@ def _decide_awaiting(state, now):
         }
 
     reminders = int(state.get("student_reminders", 0))
-    if reminders >= STUDENT_REMINDERS:
+    if reminders >= _student_reminders():
         return {
             "action": "none",
             "next_at": deadline,
@@ -223,7 +250,7 @@ def _decide_awaiting(state, now):
     return {
         "action": "remind_student",
         "next_at": deadline,
-        "reason": f"reminder {reminders + 1} of {STUDENT_REMINDERS}",
+        "reason": f"reminder {reminders + 1} of {_student_reminders()}",
     }
 
 
@@ -246,7 +273,7 @@ def next_after_nudge(now=None):
 
 def verification_deadline(prompted_at):
     """When an unconfirmed ticket auto-closes."""
-    return workdays.add_working_days(prompted_at, SLA_WORKING_DAYS)
+    return workdays.add_working_days(prompted_at, _sla_working_days())
 
 
 def _parse(value):
